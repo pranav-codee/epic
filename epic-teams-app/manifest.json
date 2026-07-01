@@ -1,0 +1,67 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "51c51fc6-82ef-4db6-8bdc-66a93e69ed4f",
+  "packageName": "com.epl.epic.v1",
+  "developer": {
+    "name": "EPL Limited",
+    "websiteUrl": "https://epic.epl.local",
+    "privacyUrl": "https://epic.epl.local/privacy",
+    "termsOfUseUrl": "https://epic.epl.local/terms"
+  },
+  "icons": {
+    "color": "icons/color.png",
+    "outline": "icons/outline.png"
+  },
+  "name": {
+    "short": "EPIC",
+    "full": "EPIC \u2014 Enterprise Platform for Intelligent IT Collaboration"
+  },
+  "description": {
+    "short": "Raise and track IT support tickets at EPL.",
+    "full": "EPIC is EPL's enterprise IT service management portal. Employees can raise and track support tickets; IT Engineers manage the queue, assign, prioritize, resolve, and report. The Admin tab is visible to all users but only functional for those with IT_ENGINEER, IT_MANAGER, or SYSTEM_ADMIN roles."
+  },
+  "accentColor": "#0067B8",
+  "staticTabs": [
+    {
+      "entityId": "epic-employee",
+      "name": "My Tickets",
+      "contentUrl": "https://epic.epl.local/employee",
+      "websiteUrl": "https://epic.epl.local/employee",
+      "scopes": [
+        "personal"
+      ]
+    },
+    {
+      "entityId": "epic-admin",
+      "name": "Admin",
+      "contentUrl": "https://epic.epl.local/admin",
+      "websiteUrl": "https://epic.epl.local/admin",
+      "scopes": [
+        "personal"
+      ]
+    }
+  ],
+  "configurableTabs": [
+    {
+      "configurationUrl": "https://epic.epl.local/teams/config",
+      "canUpdateConfiguration": true,
+      "scopes": [
+        "team",
+        "groupChat"
+      ]
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "epic.epl.local"
+  ],
+  "webApplicationInfo": {
+    "id": "51c51fc6-82ef-4db6-8bdc-66a93e69ed4f",
+    "resource": "api://epic.epl.local/51c51fc6-82ef-4db6-8bdc-66a93e69ed4f"
+  }
+}
