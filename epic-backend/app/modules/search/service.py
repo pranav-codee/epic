@@ -13,6 +13,7 @@ from ...core.rbac import Role
 def search(db, *, me,
            ticket_number: str | None = None,
            status: str | None = None,
+           ticket_type: str | None = None,
            category: str | None = None,
            priority: str | None = None,
            employee_id: str | None = None,
@@ -28,6 +29,8 @@ def search(db, *, me,
         query = query.filter(Ticket.ticket_number.ilike(f"%{ticket_number}%") if hasattr(Ticket.ticket_number, "ilike") else Ticket.ticket_number.like(f"%{ticket_number}%"))
     if status:
         query = query.filter(Ticket.status == status.upper())
+    if ticket_type:
+        query = query.filter(Ticket.ticket_type == ticket_type.upper())
     if category:
         query = query.filter(Ticket.category == category.upper())
     if priority:

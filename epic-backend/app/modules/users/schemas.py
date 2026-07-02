@@ -1,11 +1,11 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
 
 class UserProfileOut(BaseModel):
     id: str
-    email: EmailStr
+    email: str
     display_name: Optional[str] = None
     department: Optional[str] = None
     is_active: bool

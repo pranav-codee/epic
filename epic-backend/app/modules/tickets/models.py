@@ -14,6 +14,13 @@ CATEGORIES = ["HARDWARE", "SOFTWARE", "NETWORK", "VPN", "EMAIL", "SECURITY", "AC
 PRIORITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
 STATUSES = ["OPEN", "ASSIGNED", "IN_PROGRESS", "PENDING_USER", "RESOLVED", "CLOSED", "CANCELLED"]
 
+# ITIL-aligned ticket classification (REQ: ticket type taxonomy).
+# INCIDENT: unplanned interruption/degradation of an IT service.
+# SERVICE_REQUEST: routine, planned request for new service/hardware/access (no disruption).
+# PROBLEM: investigation into the root cause of one or more related incidents.
+# CHANGE_REQUEST: formal, planned modification to IT infrastructure.
+TICKET_TYPES = ["INCIDENT", "SERVICE_REQUEST", "PROBLEM", "CHANGE_REQUEST"]
+
 
 class Ticket(Base):
     __tablename__ = "tickets"
@@ -21,6 +28,7 @@ class Ticket(Base):
     ticket_number = Column(String(24), unique=True, nullable=False, index=True)
     creator_id = Column(String(36), ForeignKey("user_profiles.id"), nullable=False, index=True)
     assignee_id = Column(String(36), ForeignKey("user_profiles.id"), nullable=True, index=True)
+    ticket_type = Column(String(24), nullable=False, default="INCIDENT", server_default="INCIDENT")
     category = Column(String(32), nullable=False)
     priority = Column(String(16), nullable=False)
     status = Column(String(16), nullable=False, default="OPEN")
@@ -41,6 +49,7 @@ class Ticket(Base):
         Index("ix_tickets_assignee_status", "assignee_id", "status"),
         Index("ix_tickets_status_priority", "status", "priority"),
         Index("ix_tickets_category", "category"),
+        Index("ix_tickets_ticket_type", "ticket_type"),
     )
 
 

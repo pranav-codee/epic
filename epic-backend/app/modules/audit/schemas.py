@@ -7,6 +7,8 @@ class AuditEntryOut(BaseModel):
     id: int
     ticket_id: str
     actor_id: Optional[str] = None
+    actor_name: Optional[str] = None
+    actor_email: Optional[str] = None
     action: str
     field: Optional[str] = None
     old_value: Optional[str] = None

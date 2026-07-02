@@ -31,7 +31,7 @@ try:
     bob.roles = [Role.EMPLOYEE.value]
     t = create_ticket(db, creator=bob, title="VPN keeps disconnecting on Wi-Fi",
                       description="Office VPN drops every ~15 minutes from my MacBook.",
-                      category="VPN", priority="HIGH")
+                      ticket_type="INCIDENT", category="VPN", priority="HIGH")
     print(f"Seeded ticket {t.ticket_number}")
 finally:
     db.close()

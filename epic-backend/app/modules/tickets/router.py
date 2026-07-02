@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from . import service
 from .schemas import (
-    TicketCreateIn, TicketAssignIn, StatusChangeIn, PriorityChangeIn,
+    TicketCreateIn, TicketAssignIn, StatusChangeIn, PriorityChangeIn, TicketTypeChangeIn,
     CommentCreateIn, TicketOut, TicketDetailOut, TicketCommentOut, TicketAttachmentOut,
 )
 from .state_machine import allowed_target_states_for
@@ -28,7 +28,7 @@ def create_ticket(payload: TicketCreateIn, db: Session = Depends(get_db),
     except ValueError as e:
         raise HTTPException(400, str(e))
     t = service.create_ticket(db, creator=me, title=payload.title, description=payload.description,
-                              category=payload.category, priority=payload.priority)
+                              ticket_type=payload.ticket_type, category=payload.category, priority=payload.priority)
     return t
 
 
@@ -59,6 +59,12 @@ def change_status(ticket_id: str, payload: StatusChangeIn, db: Session = Depends
 def change_priority(ticket_id: str, payload: PriorityChangeIn, db: Session = Depends(get_db),
                     me=Depends(get_current_user)):
     return service.change_priority(db, ticket_id=ticket_id, priority=payload.priority.upper(), actor=me)
+
+
+@router.post("/{ticket_id}/reclassify", response_model=TicketOut)
+def reclassify(ticket_id: str, payload: TicketTypeChangeIn, db: Session = Depends(get_db),
+               me=Depends(get_current_user)):
+    return service.reclassify_ticket(db, ticket_id=ticket_id, ticket_type=payload.ticket_type.upper(), actor=me)
 
 
 @router.post("/{ticket_id}/cancel", response_model=TicketOut)

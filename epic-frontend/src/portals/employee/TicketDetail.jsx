@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../../api/client.js";
-import { Status, Priority } from "../../components/Badges.jsx";
+import { Status, Priority, TicketType } from "../../components/Badges.jsx";
 
 export default function TicketDetail() {
   const { id } = useParams();
@@ -60,7 +60,8 @@ export default function TicketDetail() {
         {t.ticket_number} — {t.title}
       </h2>
       <div className="toolbar">
-        <Status value={t.status} /> <Priority value={t.priority} />
+        <TicketType value={t.ticket_type} /> <Status value={t.status} />{" "}
+        <Priority value={t.priority} />
         <span className="muted">{t.category}</span>
         {!["CLOSED", "CANCELLED", "RESOLVED"].includes(t.status) && (
           <button className="btn danger secondary" onClick={cancelTicket}>
@@ -139,6 +140,7 @@ export default function TicketDetail() {
           <thead>
             <tr>
               <th>When</th>
+              <th>Who</th>
               <th>Action</th>
               <th>Field</th>
               <th>From → To</th>
@@ -150,6 +152,7 @@ export default function TicketDetail() {
                 <td className="muted">
                   {new Date(h.created_at).toLocaleString()}
                 </td>
+                <td>{h.actor_name || "System"}</td>
                 <td>{h.action}</td>
                 <td>{h.field || ""}</td>
                 <td>

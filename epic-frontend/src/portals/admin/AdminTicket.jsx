@@ -1,9 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../../api/client.js";
-import { Status, Priority } from "../../components/Badges.jsx";
+import { Status, Priority, TicketType } from "../../components/Badges.jsx";
 
 const PRIORITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+const TICKET_TYPES = [
+  "INCIDENT",
+  "SERVICE_REQUEST",
+  "PROBLEM",
+  "CHANGE_REQUEST",
+];
 
 export default function AdminTicket() {
   const { id } = useParams();
@@ -52,6 +58,14 @@ export default function AdminTicket() {
       setError(e.message);
     }
   }
+  async function reclassify(type) {
+    try {
+      await api.post(`/tickets/${id}/reclassify`, { ticket_type: type });
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
   async function postComment() {
     if (!comment.trim()) return;
     try {
@@ -70,7 +84,8 @@ export default function AdminTicket() {
         {t.ticket_number} — {t.title}
       </h2>
       <div className="toolbar">
-        <Status value={t.status} /> <Priority value={t.priority} />{" "}
+        <TicketType value={t.ticket_type} /> <Status value={t.status} />{" "}
+        <Priority value={t.priority} />{" "}
         <span className="muted">{t.category}</span>
       </div>
 
@@ -111,6 +126,19 @@ export default function AdminTicket() {
             >
               {PRIORITIES.map((p) => (
                 <option key={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Reclassify type</label>
+            <select
+              value={t.ticket_type}
+              onChange={(e) => reclassify(e.target.value)}
+            >
+              {TICKET_TYPES.map((ty) => (
+                <option key={ty} value={ty}>
+                  {ty.replace("_", " ")}
+                </option>
               ))}
             </select>
           </div>
@@ -202,6 +230,7 @@ export default function AdminTicket() {
           <thead>
             <tr>
               <th>When</th>
+              <th>Who</th>
               <th>Action</th>
               <th>Field</th>
               <th>From → To</th>
@@ -213,6 +242,7 @@ export default function AdminTicket() {
                 <td className="muted">
                   {new Date(h.created_at).toLocaleString()}
                 </td>
+                <td>{h.actor_name || "System"}</td>
                 <td>{h.action}</td>
                 <td>{h.field || ""}</td>
                 <td>

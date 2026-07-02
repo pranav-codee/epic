@@ -1,18 +1,22 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
-from .models import CATEGORIES, PRIORITIES, STATUSES
+from .models import CATEGORIES, PRIORITIES, STATUSES, TICKET_TYPES
 
 
 class TicketCreateIn(BaseModel):
     title: str = Field(min_length=3, max_length=256)
     description: str = Field(min_length=5)
+    ticket_type: str
     category: str
     priority: str
 
     def normalized(self):
+        self.ticket_type = self.ticket_type.upper().strip()
         self.category = self.category.upper().strip()
         self.priority = self.priority.upper().strip()
+        if self.ticket_type not in TICKET_TYPES:
+            raise ValueError(f"Invalid ticket_type. Allowed: {TICKET_TYPES}")
         if self.category not in CATEGORIES:
             raise ValueError(f"Invalid category. Allowed: {CATEGORIES}")
         if self.priority not in PRIORITIES:
@@ -30,6 +34,10 @@ class StatusChangeIn(BaseModel):
 
 class PriorityChangeIn(BaseModel):
     priority: str
+
+
+class TicketTypeChangeIn(BaseModel):
+    ticket_type: str
 
 
 class CommentCreateIn(BaseModel):
@@ -71,6 +79,7 @@ class TicketOut(BaseModel):
     ticket_number: str
     title: str
     description: str
+    ticket_type: str
     category: str
     priority: str
     status: str

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client.js";
-import { Status, Priority } from "../../components/Badges.jsx";
+import { Status, Priority, TicketType } from "../../components/Badges.jsx";
 
 export default function MyTickets() {
   const [tickets, setTickets] = useState([]);
@@ -57,6 +57,7 @@ export default function MyTickets() {
           <tr>
             <th>Ticket #</th>
             <th>Title</th>
+            <th>Type</th>
             <th>Status</th>
             <th>Priority</th>
             <th>Category</th>
@@ -70,6 +71,9 @@ export default function MyTickets() {
                 <Link to={`/employee/tickets/${t.id}`}>{t.ticket_number}</Link>
               </td>
               <td>{t.title}</td>
+              <td>
+                <TicketType value={t.ticket_type} />
+              </td>
               <td>
                 <Status value={t.status} />
               </td>

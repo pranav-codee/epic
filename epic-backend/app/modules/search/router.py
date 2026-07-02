@@ -12,6 +12,7 @@ router = APIRouter()
 def search_tickets(
     ticket_number: str | None = None,
     status: str | None = None,
+    ticket_type: str | None = None,
     category: str | None = None,
     priority: str | None = None,
     employee_id: str | None = None,
@@ -20,6 +21,6 @@ def search_tickets(
     me=Depends(get_current_user),
 ):
     total, rows = service.search(db, me=me, ticket_number=ticket_number,
-                                 status=status, category=category, priority=priority,
+                                 status=status, ticket_type=ticket_type, category=category, priority=priority,
                                  employee_id=employee_id, q=q)
     return {"total": total, "results": rows}

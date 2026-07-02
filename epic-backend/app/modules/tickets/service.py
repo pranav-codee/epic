@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 
-from .models import Ticket, TicketComment, TicketAttachment, TicketCounter, CATEGORIES, PRIORITIES, STATUSES
+from .models import Ticket, TicketComment, TicketAttachment, TicketCounter, CATEGORIES, PRIORITIES, STATUSES, TICKET_TYPES
 from .state_machine import next_state, event_for_target, allowed_target_states_for, RESOLVED, CLOSED, CANCELLED
 from ..audit import service as audit
 from ..audit.service import Action
@@ -56,7 +56,9 @@ def _is_engineer(user) -> bool:
 
 # ---------- Core mutations ----------
 
-def create_ticket(db: Session, *, creator, title: str, description: str, category: str, priority: str) -> Ticket:
+def create_ticket(db: Session, *, creator, title: str, description: str, ticket_type: str, category: str, priority: str) -> Ticket:
+    if ticket_type not in TICKET_TYPES:
+        raise DomainError(f"Invalid ticket_type. Allowed: {TICKET_TYPES}")
     if category not in CATEGORIES:
         raise DomainError(f"Invalid category. Allowed: {CATEGORIES}")
     if priority not in PRIORITIES:
@@ -66,6 +68,7 @@ def create_ticket(db: Session, *, creator, title: str, description: str, categor
     t = Ticket(
         ticket_number=number,
         creator_id=creator.id,
+        ticket_type=ticket_type,
         category=category,
         priority=priority,
         status="OPEN",
@@ -75,12 +78,32 @@ def create_ticket(db: Session, *, creator, title: str, description: str, categor
     db.add(t); db.flush()
 
     audit.record(db, ticket_id=t.id, actor_id=creator.id, action=Action.CREATE,
-                 metadata={"ticket_number": number, "category": category, "priority": priority})
+                 metadata={"ticket_number": number, "ticket_type": ticket_type, "category": category, "priority": priority})
     db.commit(); db.refresh(t)
 
     notifier.dispatch(db, event="TICKET_CREATED", ticket=t, actor_name=creator.display_name,
                       recipient_id=creator.id)
     return t
+
+
+def reclassify_ticket(db: Session, *, ticket_id: str, ticket_type: str, actor) -> Ticket:
+    """Change a ticket's type — e.g. promoting a recurring INCIDENT to a PROBLEM once root-cause
+    investigation is warranted. Only IT staff may reclassify."""
+    if not _is_engineer(actor):
+        raise Forbidden("Only IT Engineers may reclassify tickets")
+    if ticket_type not in TICKET_TYPES:
+        raise DomainError(f"Invalid ticket_type. Allowed: {TICKET_TYPES}")
+    ticket = get_ticket_or_404(db, ticket_id)
+    old = ticket.ticket_type
+    if old == ticket_type:
+        return ticket
+    ticket.ticket_type = ticket_type
+    audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.TYPE_CHANGE,
+                 field="ticket_type", old_value=old, new_value=ticket_type)
+    db.commit(); db.refresh(ticket)
+    notifier.dispatch(db, event="TICKET_UPDATED", ticket=ticket, actor_name=actor.display_name,
+                      recipient_id=ticket.creator_id)
+    return ticket
 
 
 def assign_ticket(db: Session, *, ticket_id: str, assignee_id: str, actor) -> Ticket:

@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client.js";
-import { Status, Priority } from "../../components/Badges.jsx";
+import { Status, Priority, TicketType } from "../../components/Badges.jsx";
 
 export default function Queue() {
   const [tickets, setTickets] = useState([]);
   const [filters, setFilters] = useState({
     ticket_number: "",
     status: "",
+    ticket_type: "",
     category: "",
     priority: "",
     q: "",
@@ -61,6 +62,21 @@ export default function Queue() {
           ))}
         </select>
         <select
+          value={filters.ticket_type}
+          onChange={(e) =>
+            setFilters({ ...filters, ticket_type: e.target.value })
+          }
+        >
+          <option value="">All types</option>
+          {["INCIDENT", "SERVICE_REQUEST", "PROBLEM", "CHANGE_REQUEST"].map(
+            (t) => (
+              <option key={t} value={t}>
+                {t.replace("_", " ")}
+              </option>
+            ),
+          )}
+        </select>
+        <select
           value={filters.category}
           onChange={(e) => setFilters({ ...filters, category: e.target.value })}
         >
@@ -98,6 +114,7 @@ export default function Queue() {
           <tr>
             <th>Ticket #</th>
             <th>Title</th>
+            <th>Type</th>
             <th>Creator</th>
             <th>Assignee</th>
             <th>Status</th>
@@ -112,6 +129,9 @@ export default function Queue() {
                 <Link to={`/admin/tickets/${t.id}`}>{t.ticket_number}</Link>
               </td>
               <td>{t.title}</td>
+              <td>
+                <TicketType value={t.ticket_type} />
+              </td>
               <td>{t.creator?.display_name || "—"}</td>
               <td>
                 {t.assignee?.display_name || (

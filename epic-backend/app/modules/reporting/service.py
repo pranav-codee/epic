@@ -6,6 +6,7 @@ from ..tickets.models import Ticket
 
 def overview(db: Session):
     by_status = dict(db.query(Ticket.status, func.count(Ticket.id)).group_by(Ticket.status).all())
+    by_ticket_type = dict(db.query(Ticket.ticket_type, func.count(Ticket.id)).group_by(Ticket.ticket_type).all())
     by_category = dict(db.query(Ticket.category, func.count(Ticket.id)).group_by(Ticket.category).all())
     by_priority = dict(db.query(Ticket.priority, func.count(Ticket.id)).group_by(Ticket.priority).all())
     total = db.query(func.count(Ticket.id)).scalar() or 0
@@ -15,6 +16,7 @@ def overview(db: Session):
         "total_tickets": total,
         "open_tickets": open_total,
         "by_status": by_status,
+        "by_ticket_type": by_ticket_type,
         "by_category": by_category,
         "by_priority": by_priority,
     }
@@ -32,7 +34,7 @@ def engineer_workload(db: Session, engineer_id: str):
 
 
 def report_group(db: Session, group_by: str, from_dt=None, to_dt=None):
-    col_map = {"status": Ticket.status, "category": Ticket.category, "priority": Ticket.priority}
+    col_map = {"status": Ticket.status, "ticket_type": Ticket.ticket_type, "category": Ticket.category, "priority": Ticket.priority}
     col = col_map.get(group_by)
     if col is None:
         raise ValueError(f"group_by must be one of {list(col_map)}")
