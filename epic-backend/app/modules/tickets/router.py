@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from ...core.rate_limit import limiter
 
 from . import service
 from .schemas import (
@@ -10,6 +11,7 @@ from .schemas import (
 from .state_machine import allowed_target_states_for
 from ...database import get_db
 from ...dependencies import get_current_user
+from ...config import get_settings
 
 router = APIRouter()
 
@@ -21,7 +23,8 @@ def _to_detail(t):
 
 
 @router.post("", response_model=TicketOut, status_code=201)
-def create_ticket(payload: TicketCreateIn, db: Session = Depends(get_db),
+@limiter.limit("30/minute")
+def create_ticket(request: Request, payload: TicketCreateIn, db: Session = Depends(get_db),
                   me=Depends(get_current_user)):
     try:
         payload = payload.normalized()
@@ -44,36 +47,42 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), me=Depends(get_cur
 
 
 @router.post("/{ticket_id}/assign", response_model=TicketOut)
-def assign(ticket_id: str, payload: TicketAssignIn, db: Session = Depends(get_db),
+@limiter.limit("30/minute")
+def assign(request: Request, ticket_id: str, payload: TicketAssignIn, db: Session = Depends(get_db),
            me=Depends(get_current_user)):
     return service.assign_ticket(db, ticket_id=ticket_id, assignee_id=payload.assignee_id, actor=me)
 
 
 @router.post("/{ticket_id}/status", response_model=TicketOut)
-def change_status(ticket_id: str, payload: StatusChangeIn, db: Session = Depends(get_db),
+@limiter.limit("30/minute")
+def change_status(request: Request, ticket_id: str, payload: StatusChangeIn, db: Session = Depends(get_db),
                   me=Depends(get_current_user)):
     return service.change_status(db, ticket_id=ticket_id, target_status=payload.target_status.upper(), actor=me)
 
 
 @router.post("/{ticket_id}/priority", response_model=TicketOut)
-def change_priority(ticket_id: str, payload: PriorityChangeIn, db: Session = Depends(get_db),
+@limiter.limit("30/minute")
+def change_priority(request: Request, ticket_id: str, payload: PriorityChangeIn, db: Session = Depends(get_db),
                     me=Depends(get_current_user)):
     return service.change_priority(db, ticket_id=ticket_id, priority=payload.priority.upper(), actor=me)
 
 
 @router.post("/{ticket_id}/reclassify", response_model=TicketOut)
-def reclassify(ticket_id: str, payload: TicketTypeChangeIn, db: Session = Depends(get_db),
+@limiter.limit("30/minute")
+def reclassify(request: Request, ticket_id: str, payload: TicketTypeChangeIn, db: Session = Depends(get_db),
                me=Depends(get_current_user)):
     return service.reclassify_ticket(db, ticket_id=ticket_id, ticket_type=payload.ticket_type.upper(), actor=me)
 
 
 @router.post("/{ticket_id}/cancel", response_model=TicketOut)
-def cancel(ticket_id: str, db: Session = Depends(get_db), me=Depends(get_current_user)):
+@limiter.limit("30/minute")
+def cancel(request: Request, ticket_id: str, db: Session = Depends(get_db), me=Depends(get_current_user)):
     return service.cancel_ticket(db, ticket_id=ticket_id, actor=me)
 
 
 @router.post("/{ticket_id}/comments", response_model=TicketCommentOut, status_code=201)
-def add_comment(ticket_id: str, payload: CommentCreateIn, db: Session = Depends(get_db),
+@limiter.limit("30/minute")
+def add_comment(request: Request, ticket_id: str, payload: CommentCreateIn, db: Session = Depends(get_db),
                 me=Depends(get_current_user)):
     c = service.add_comment(db, ticket_id=ticket_id, text=payload.text, actor=me)
     # Eagerly attach author for response shape.
@@ -82,9 +91,24 @@ def add_comment(ticket_id: str, payload: CommentCreateIn, db: Session = Depends(
 
 
 @router.post("/{ticket_id}/attachments", response_model=TicketAttachmentOut, status_code=201)
-async def upload_attachment(ticket_id: str, file: UploadFile = File(...),
+@limiter.limit("10/minute")
+async def upload_attachment(request: Request, ticket_id: str, file: UploadFile = File(...),
                             db: Session = Depends(get_db), me=Depends(get_current_user)):
-    data = await file.read()
+    max_bytes = get_settings().ATTACHMENT_MAX_BYTES
+    chunks = []
+    total = 0
+    CHUNK = 1024 * 1024  # 1 MB
+    while True:
+        chunk = await file.read(CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            # Stop reading immediately — never buffer more than max_bytes + one chunk.
+            raise HTTPException(413, f"Attachment exceeds {max_bytes} bytes")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+
     att = service.add_attachment(db, ticket_id=ticket_id, file_name=file.filename,
                                  content_type=file.content_type, data=data, actor=me)
     return att
@@ -99,6 +123,11 @@ def download_attachment(ticket_id: str, att_id: str, db: Session = Depends(get_d
     if not att:
         raise HTTPException(404, "Attachment not found")
     from .storage import get_storage
+    from .attachment_validation import safe_download_filename
     fh = get_storage().open(att.storage_uri)
-    return StreamingResponse(fh, media_type=att.content_type or "application/octet-stream",
-                             headers={"Content-Disposition": f'attachment; filename="{att.file_name}"'})
+    safe_name = safe_download_filename(att.file_name)
+    # Always force a download rather than trusting the stored content_type for inline rendering —
+    # this avoids a stored attachment being served in a way the browser tries to execute/render.
+    return StreamingResponse(fh, media_type="application/octet-stream",
+                             headers={"Content-Disposition": f'attachment; filename="{safe_name}"',
+                                      "X-Content-Type-Options": "nosniff"})

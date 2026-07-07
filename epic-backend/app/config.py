@@ -43,14 +43,27 @@ class Settings(BaseSettings):
     # --- Attachments ---
     ATTACHMENT_DIR: str = "./storage/attachments"
     ATTACHMENT_MAX_BYTES: int = 25 * 1024 * 1024   # 25 MB (default A2)
-    ATTACHMENT_BLOCKED_EXTENSIONS: str = ".exe,.bat,.ps1,.js,.msi,.cmd,.vbs"
+    # ALLOWLIST, not a denylist: an attachment's extension AND sniffed content must both match
+    # one of these entries. Denylists are trivially bypassed (rename, unlisted extension, etc).
+    ATTACHMENT_ALLOWED_EXTENSIONS: str = ".png,.jpg,.jpeg,.gif,.pdf,.txt,.log,.csv,.docx,.xlsx,.pptx,.zip"
+    ATTACHMENT_ALLOWED_MIME_TYPES: str = (
+        "image/png,image/jpeg,image/gif,application/pdf,text/plain,text/csv,"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation,"
+        "application/zip,application/x-zip-compressed"
+    )
 
     # --- Misc ---
     BOOTSTRAP_ADMIN_EMAILS: str = ""   # comma-separated emails granted SYSTEM_ADMIN on first login
 
     @property
-    def blocked_extensions(self) -> set[str]:
-        return {e.strip().lower() for e in self.ATTACHMENT_BLOCKED_EXTENSIONS.split(",") if e.strip()}
+    def allowed_extensions(self) -> set[str]:
+        return {e.strip().lower() for e in self.ATTACHMENT_ALLOWED_EXTENSIONS.split(",") if e.strip()}
+
+    @property
+    def allowed_mime_types(self) -> set[str]:
+        return {m.strip().lower() for m in self.ATTACHMENT_ALLOWED_MIME_TYPES.split(",") if m.strip()}
 
     @property
     def bootstrap_admin_emails_set(self) -> set[str]:

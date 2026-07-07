@@ -7,28 +7,32 @@ from fastapi import APIRouter, Depends, Request, HTTPException, Response
 from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
 
+from ...core.rate_limit import limiter
 from ...database import get_db
 from ...config import get_settings
-from ...core.security import issue_session, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS
+from ...core.security import (
+    issue_session, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS,
+    issue_oauth_state, read_oauth_state,
+)
 from ...dependencies import get_current_user
 from ..users import service as users_service
 from .service import get_provider
 
 router = APIRouter()
 
-_state_cache: dict[str, bool] = {}  # in-memory CSRF state; fine for single-instance dev
-
 
 @router.get("/login")
-def login():
-    """Kicks off the OIDC flow."""
-    state = secrets.token_urlsafe(24)
-    _state_cache[state] = True
+@limiter.limit("20/minute")
+def login(request: Request):
+    """Kicks off the OIDC flow. State is a signed, self-expiring token — no server-side
+    storage needed, so this works across multiple app instances behind a load balancer."""
+    state = issue_oauth_state(secrets.token_urlsafe(16))
     return RedirectResponse(get_provider().authorize_url(state))
 
 
 @router.get("/mock-login", include_in_schema=False)
-def mock_login_page(state: str):
+@limiter.limit("20/minute")
+def mock_login_page(request: Request, state: str):
     """Tiny HTML form for the mock provider (dev only)."""
     if get_settings().AUTH_PROVIDER != "mock":
         raise HTTPException(404, "Not found")
@@ -46,12 +50,12 @@ def mock_login_page(state: str):
 
 
 @router.get("/callback")
+@limiter.limit("20/minute")
 async def callback(state: str, request: Request, db: Session = Depends(get_db),
                    code: str | None = None, email: str | None = None):
     settings = get_settings()
-    if state not in _state_cache:
-        raise HTTPException(400, "Invalid state")
-    _state_cache.pop(state, None)
+    if not read_oauth_state(state):
+        raise HTTPException(400, "Invalid or expired state")
 
     # Mock provider: form submits ?email=...  → fabricate `code` from email so the contract stays uniform.
     if settings.AUTH_PROVIDER == "mock" and code is None:
@@ -76,7 +80,7 @@ async def callback(state: str, request: Request, db: Session = Depends(get_db),
         department=claims.department,
     )
 
-    token = issue_session(user.entra_object_id)
+    token = issue_session(user.entra_object_id, user.session_version)
     redirect = RedirectResponse(settings.FRONTEND_BASE_URL)
     redirect.set_cookie(
         key=SESSION_COOKIE_NAME, value=token,

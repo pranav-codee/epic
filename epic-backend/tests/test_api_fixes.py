@@ -37,8 +37,15 @@ def client():
     return TestClient(app)
 
 
-def _login(client, oid):
-    token = issue_session(oid)
+def _login(client, oid, db=None):
+    """Issue a test session cookie. Looks up session_version from the DB so the token
+    matches what dependencies.get_current_user now checks."""
+    session_version = None
+    if db is not None:
+        from app.modules.users.models import UserProfile
+        u = db.query(UserProfile).filter(UserProfile.entra_object_id == oid).one_or_none()
+        session_version = u.session_version if u else None
+    token = issue_session(oid, session_version)
     client.cookies.set(SESSION_COOKIE_NAME, token)
 
 
@@ -50,7 +57,7 @@ def test_list_users_with_local_domain_emails_does_not_500(db_session, client):
     )
     set_roles(db_session, admin.id, [Role.EMPLOYEE.value, Role.SYSTEM_ADMIN.value])
 
-    _login(client, "mock-admin@epl.local")
+    _login(client, "mock-admin@epl.local", db_session)
     r = client.get("/api/v1/users")
     assert r.status_code == 200
     emails = [u["email"] for u in r.json()]
@@ -62,7 +69,7 @@ def test_create_ticket_requires_valid_ticket_type(db_session, client):
         db_session, entra_oid="mock-emp@epl.local",
         email="emp@epl.local", display_name="Employee One", department="Ops",
     )
-    _login(client, "mock-emp@epl.local")
+    _login(client, "mock-emp@epl.local", db_session)
 
     bad = client.post("/api/v1/tickets", json={
         "title": "Broken thing", "description": "Something is broken",
@@ -89,7 +96,7 @@ def test_engineer_can_reclassify_ticket_and_employee_cannot(db_session, client):
     )
     set_roles(db_session, eng.id, [Role.EMPLOYEE.value, Role.IT_ENGINEER.value])
 
-    _login(client, "mock-emp2@epl.local")
+    _login(client, "mock-emp2@epl.local", db_session)
     created = client.post("/api/v1/tickets", json={
         "title": "VPN drops constantly", "description": "VPN disconnects every few minutes",
         "ticket_type": "INCIDENT", "category": "VPN", "priority": "HIGH",
@@ -101,7 +108,7 @@ def test_engineer_can_reclassify_ticket_and_employee_cannot(db_session, client):
     assert forbidden.status_code == 403
 
     # Engineer can promote a recurring incident to a problem.
-    _login(client, "mock-eng@epl.local")
+    _login(client, "mock-eng@epl.local", db_session)
     ok = client.post(f"/api/v1/tickets/{ticket_id}/reclassify", json={"ticket_type": "PROBLEM"})
     assert ok.status_code == 200
     assert ok.json()["ticket_type"] == "PROBLEM"
@@ -118,14 +125,14 @@ def test_audit_history_reports_who_made_each_change(db_session, client):
     )
     set_roles(db_session, eng.id, [Role.EMPLOYEE.value, Role.IT_ENGINEER.value])
 
-    _login(client, "mock-emp3@epl.local")
+    _login(client, "mock-emp3@epl.local", db_session)
     created = client.post("/api/v1/tickets", json={
         "title": "Printer offline", "description": "The 3rd floor printer is offline",
         "ticket_type": "INCIDENT", "category": "HARDWARE", "priority": "MEDIUM",
     }).json()
     ticket_id = created["id"]
 
-    _login(client, "mock-eng2@epl.local")
+    _login(client, "mock-eng2@epl.local", db_session)
     client.post(f"/api/v1/tickets/{ticket_id}/priority", json={"priority": "HIGH"})
 
     history = client.get(f"/api/v1/audit/tickets/{ticket_id}").json()

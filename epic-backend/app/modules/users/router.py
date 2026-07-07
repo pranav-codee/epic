@@ -33,6 +33,19 @@ def update_roles(user_id: str, payload: RoleUpdateIn, db: Session = Depends(get_
                  _admin=Depends(require_role(Role.SYSTEM_ADMIN))):
     try:
         user = service.set_roles(db, user_id, payload.roles)
+        # A role change is a privilege change — force any existing session cookie to be
+        # re-validated rather than letting an old (now-wrong) privilege level ride out its 8h.
+        service.revoke_sessions(db, user_id)
     except (ValueError, LookupError) as e:
         raise HTTPException(400, str(e))
     return service.attach_roles(user, db)
+
+
+@router.post("/{user_id}/revoke-sessions", status_code=204)
+def force_logout(user_id: str, db: Session = Depends(get_db),
+                 _admin=Depends(require_role(Role.SYSTEM_ADMIN))):
+    """Immediately invalidates every session cookie currently held by this user."""
+    try:
+        service.revoke_sessions(db, user_id)
+    except LookupError as e:
+        raise HTTPException(404, str(e))

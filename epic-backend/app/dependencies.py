@@ -20,9 +20,10 @@ def get_current_user(
     if not epic_session:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
-    oid = read_session(epic_session)
-    if not oid:
+    session_data = read_session(epic_session)
+    if not session_data:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
+    oid = session_data["oid"]
 
     # Imported here to avoid circular import at module-load time.
     from .modules.users.models import UserProfile, UserRoleAssignment
@@ -30,6 +31,10 @@ def get_current_user(
     user = db.query(UserProfile).filter(UserProfile.entra_object_id == oid).one_or_none()
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User profile not found or inactive")
+    if session_data.get("sv") != user.session_version:
+        # The token predates a forced revocation (deactivation, admin "log out everywhere",
+        # role change, etc). Reject even though the signature itself is still valid.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session has been revoked")
 
     # Attach role strings as a transient attribute.
     user.roles = [r.role for r in db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == user.id).all()]

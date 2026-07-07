@@ -2,10 +2,13 @@
 EPIC FastAPI application entrypoint.
 Mounts each SRS module under /api/v1/<module> so they remain independently testable (NFR-5.4-4).
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from .config import get_settings
+from .core.rate_limit import limiter
 from .core.exceptions import DomainError, domain_error_handler
 from .database import Base, engine
 from . import models  # noqa: F401  — ensures all models are registered
@@ -24,20 +27,21 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="EPIC v1 — Enterprise Platform for Intelligent IT Collaboration", version="1.0.0")
 
-    # CORS: tight allowlist; the Teams tab loads under teams.microsoft.com domain frame.
+    # CORS: tight allowlist; the Teams tab loads under teams.microsoft.com and tenant subdomains.
+    # NOTE: Starlette's CORSMiddleware does exact-string matching on allow_origins — it does NOT
+    # glob-expand "*". Wildcard subdomains must go through allow_origin_regex instead.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            settings.FRONTEND_BASE_URL,
-            "https://teams.microsoft.com",
-            "https://*.teams.microsoft.com",
-        ],
+        allow_origins=[settings.FRONTEND_BASE_URL],
+        allow_origin_regex=r"^https://([a-zA-Z0-9-]+\.)?teams\.microsoft\.com$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     app.add_exception_handler(DomainError, domain_error_handler)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     api_prefix = "/api/v1"
     app.include_router(auth_router, prefix=f"{api_prefix}/auth", tags=["auth"])

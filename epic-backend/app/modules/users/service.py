@@ -2,6 +2,7 @@
 User profile management. The primary call site is `upsert_from_identity(...)` which is
 invoked by the auth callback after Entra ID has authenticated the user.
 """
+import uuid
 from datetime import datetime
 from sqlalchemy.orm import Session
 from .models import UserProfile, UserRoleAssignment
@@ -70,6 +71,18 @@ def set_roles(db: Session, user_id: str, roles: list[str]) -> UserProfile:
     db.flush()
     for r in set(roles):
         db.add(UserRoleAssignment(user_id=user_id, role=r))
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def revoke_sessions(db: Session, user_id: str) -> UserProfile:
+    """Force-logout: any session cookie issued before this call stops working immediately,
+    instead of waiting out the normal 8h expiry."""
+    user = db.query(UserProfile).filter(UserProfile.id == user_id).one_or_none()
+    if not user:
+        raise LookupError("User not found")
+    user.session_version = str(uuid.uuid4())
     db.commit()
     db.refresh(user)
     return user

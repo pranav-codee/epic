@@ -18,6 +18,11 @@ class UserProfile(Base):
     display_name = Column(String(256), nullable=True)
     department = Column(String(128), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Bumped whenever we need to invalidate all of this user's existing session cookies
+    # immediately (e.g. "force logout", suspicious activity, deactivation) rather than
+    # waiting out the 8h natural expiry. The value is embedded in the signed session token
+    # and checked against the DB on every request.
+    session_version = Column(String(36), default=_uuid, nullable=False)
     last_login_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

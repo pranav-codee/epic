@@ -6,6 +6,8 @@ in router code. A future AI Orchestrator can call these functions directly to ob
 audit + notification behaviour without duplicating logic.
 """
 from datetime import datetime, timezone
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 
@@ -23,15 +25,38 @@ from ...core.rbac import Role
 # ---------- Helpers ----------
 
 def _next_ticket_number(db: Session) -> str:
+    """
+    Allocate the next ticket number for the current year.
+
+    Previous version read `last_number` into Python, incremented it there, then wrote it
+    back — a classic read-modify-write race. It used `with_for_update()` to guard against
+    that, but skipped the lock on SQLite (SQLite doesn't support row-level locks the same
+    way), which left dev/test environments exposed to duplicate ticket numbers under
+    concurrent requests.
+
+    Fix: do the "+1" inside the UPDATE statement itself (`last_number = last_number + 1`).
+    That makes the increment atomic at the database level on every backend — SQLite included
+    — without needing dialect-specific locking, because no Python code ever computes the new
+    value from a value it read separately.
+    """
     year = datetime.utcnow().year
-    counter = db.query(TicketCounter).filter(TicketCounter.year == year).with_for_update().one_or_none() \
-        if db.bind.dialect.name != "sqlite" else db.query(TicketCounter).filter(TicketCounter.year == year).one_or_none()
-    if counter is None:
-        counter = TicketCounter(year=year, last_number=0)
-        db.add(counter); db.flush()
-    counter.last_number += 1
+
+    if db.query(TicketCounter).filter(TicketCounter.year == year).one_or_none() is None:
+        db.add(TicketCounter(year=year, last_number=0))
+        try:
+            db.flush()
+        except IntegrityError:
+            # Another concurrent request created this year's row first — fine, continue.
+            db.rollback()
+
+    db.execute(
+        update(TicketCounter)
+        .where(TicketCounter.year == year)
+        .values(last_number=TicketCounter.last_number + 1)
+    )
     db.flush()
-    return f"EPIC-{year}-{counter.last_number:06d}"
+    new_number = db.query(TicketCounter.last_number).filter(TicketCounter.year == year).scalar()
+    return f"EPIC-{year}-{new_number:06d}"
 
 
 def get_ticket_or_404(db: Session, ticket_id: str) -> Ticket:
@@ -213,11 +238,16 @@ def add_attachment(db: Session, *, ticket_id: str, file_name: str, content_type:
     _ensure_visibility(ticket, actor)
 
     s = get_settings()
+    # Size is already enforced while streaming in the router (before this much of the file
+    # is even buffered), but we re-check here too since this function can be called directly.
     if len(data) > s.ATTACHMENT_MAX_BYTES:
         raise DomainError(f"Attachment exceeds {s.ATTACHMENT_MAX_BYTES} bytes")
-    ext = ("." + file_name.rsplit(".", 1)[-1].lower()) if "." in file_name else ""
-    if ext in s.blocked_extensions:
-        raise DomainError(f"Attachments with extension {ext} are not permitted")
+
+    from .attachment_validation import validate_attachment
+    try:
+        validate_attachment(file_name, content_type, data, s.allowed_extensions, s.allowed_mime_types)
+    except ValueError as e:
+        raise DomainError(str(e))
 
     from .storage import get_storage
     uri = get_storage().save(ticket.id, file_name, data)

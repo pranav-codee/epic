@@ -1,15 +1,18 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from . import service
 from .schemas import TicketSearchOut
 from ...database import get_db
 from ...dependencies import get_current_user
+from ...core.rate_limit import limiter
 
 router = APIRouter()
 
 
 @router.get("/tickets", response_model=TicketSearchOut)
+@limiter.limit("60/minute")
 def search_tickets(
+    request: Request,
     ticket_number: str | None = None,
     status: str | None = None,
     ticket_type: str | None = None,
