@@ -16,6 +16,8 @@ from ...core.security import (
 )
 from ...dependencies import get_current_user
 from ..users import service as users_service
+from ..audit import service as audit
+from ..audit.service import Action
 from .service import get_provider
 
 router = APIRouter()
@@ -70,6 +72,11 @@ async def callback(state: str, request: Request, db: Session = Depends(get_db),
     try:
         claims = await provider.exchange_code(code)
     except Exception as e:
+        # No user/actor to attach yet (auth itself failed) — still record the attempt so a
+        # spike of failed logins is visible in the audit trail rather than leaving no trace.
+        audit.record(db, actor_id=None, action=Action.LOGIN_FAILED,
+                     metadata={"reason": str(e)})
+        db.commit()
         raise HTTPException(401, f"Authentication failed: {e}")
 
     user = users_service.upsert_from_identity(
@@ -79,6 +86,10 @@ async def callback(state: str, request: Request, db: Session = Depends(get_db),
         display_name=claims.display_name,
         department=claims.department,
     )
+
+    audit.record(db, actor_id=user.id, action=Action.LOGIN,
+                 metadata={"email": user.email})
+    db.commit()
 
     token = issue_session(user.entra_object_id, user.session_version)
     redirect = RedirectResponse(settings.FRONTEND_BASE_URL)

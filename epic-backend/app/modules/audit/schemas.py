@@ -5,7 +5,7 @@ from typing import Optional
 
 class AuditEntryOut(BaseModel):
     id: int
-    ticket_id: str
+    ticket_id: Optional[str] = None
     actor_id: Optional[str] = None
     actor_name: Optional[str] = None
     actor_email: Optional[str] = None

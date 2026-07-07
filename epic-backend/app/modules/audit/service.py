@@ -20,8 +20,17 @@ class Action:
     CLOSED = "CLOSED"
     CANCELLED = "CANCELLED"
 
+    # --- System / account security events (no associated ticket) ---
+    # These close the A09 (Security Logging & Monitoring Failure) gap: previously role
+    # grants/revocations, forced logouts, and logins produced no audit trail at all.
+    ROLE_GRANT = "ROLE_GRANT"
+    ROLE_REVOKE = "ROLE_REVOKE"
+    FORCE_LOGOUT = "FORCE_LOGOUT"
+    LOGIN = "LOGIN"
+    LOGIN_FAILED = "LOGIN_FAILED"
 
-def record(db: Session, *, ticket_id: str, actor_id: str | None, action: str,
+
+def record(db: Session, *, actor_id: str | None, action: str, ticket_id: str | None = None,
            field: str | None = None, old_value=None, new_value=None, metadata: dict | None = None) -> TicketAuditLog:
     entry = TicketAuditLog(
         ticket_id=ticket_id,

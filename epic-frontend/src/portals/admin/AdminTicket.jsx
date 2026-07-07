@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../../api/client.js";
 import { Status, Priority, TicketType } from "../../components/Badges.jsx";
+import { formatUtcDateTime } from "../../utils/time.js";
 
 const PRIORITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const TICKET_TYPES = [
@@ -10,6 +11,10 @@ const TICKET_TYPES = [
   "PROBLEM",
   "CHANGE_REQUEST",
 ];
+// Only these roles are valid ticket assignees. The API also enforces this server-side
+// (never trust the client), but filtering here stops IT staff from accidentally picking
+// an employee from an unfiltered list in the first place.
+const SUPPORT_ROLES = ["IT_ENGINEER", "IT_MANAGER", "SYSTEM_ADMIN"];
 
 export default function AdminTicket() {
   const { id } = useParams();
@@ -24,9 +29,11 @@ export default function AdminTicket() {
     setT(await api.get(`/tickets/${id}`));
     setHistory(await api.get(`/audit/tickets/${id}`));
     try {
-      setEngineers(await api.get("/users"));
+      // /users/support-staff (not /users) — open to any IT_ENGINEER/IT_MANAGER/SYSTEM_ADMIN,
+      // not just SYSTEM_ADMIN, so the assign dropdown actually works for plain engineers too.
+      setEngineers(await api.get("/users/support-staff"));
     } catch (_) {
-      /* not admin */
+      /* shouldn't happen for any signed-in IT staff member, but fail quiet either way */
     }
   }
   useEffect(() => {
@@ -78,6 +85,7 @@ export default function AdminTicket() {
   }
 
   if (!t) return <p>Loading…</p>;
+  const isTerminal = (t.allowed_target_states || []).length === 0;
   return (
     <>
       <h2>
@@ -100,6 +108,7 @@ export default function AdminTicket() {
             <select
               value={assigneeId}
               onChange={(e) => setAssigneeId(e.target.value)}
+              disabled={isTerminal}
             >
               <option value="">— Choose user —</option>
               {engineers.map((u) => (
@@ -109,7 +118,7 @@ export default function AdminTicket() {
               ))}
             </select>
           </div>
-          <button className="btn" onClick={assign}>
+          <button className="btn" onClick={assign} disabled={isTerminal}>
             Assign
           </button>
         </div>
@@ -123,6 +132,7 @@ export default function AdminTicket() {
             <select
               value={t.priority}
               onChange={(e) => changePriority(e.target.value)}
+              disabled={isTerminal}
             >
               {PRIORITIES.map((p) => (
                 <option key={p}>{p}</option>
@@ -134,6 +144,7 @@ export default function AdminTicket() {
             <select
               value={t.ticket_type}
               onChange={(e) => reclassify(e.target.value)}
+              disabled={isTerminal}
             >
               {TICKET_TYPES.map((ty) => (
                 <option key={ty} value={ty}>
@@ -143,6 +154,11 @@ export default function AdminTicket() {
             </select>
           </div>
         </div>
+        {isTerminal && (
+          <p className="muted" style={{ marginTop: 8 }}>
+            Terminal state — assignment, priority, and type are locked.
+          </p>
+        )}
 
         <div className="form-row">
           <label>Move to status</label>
@@ -179,9 +195,9 @@ export default function AdminTicket() {
             )}
           </dd>
           <dt>Created</dt>
-          <dd>{new Date(t.created_at).toLocaleString()}</dd>
+          <dd>{formatUtcDateTime(t.created_at)}</dd>
           <dt>Updated</dt>
-          <dd>{new Date(t.updated_at).toLocaleString()}</dd>
+          <dd>{formatUtcDateTime(t.updated_at)}</dd>
         </dl>
         <p style={{ whiteSpace: "pre-wrap", marginTop: 12 }}>{t.description}</p>
       </div>
@@ -192,7 +208,7 @@ export default function AdminTicket() {
           <div key={c.id} className="comment">
             <div className="muted">
               {c.author?.display_name || "Unknown"} ·{" "}
-              {new Date(c.created_at).toLocaleString()}
+              {formatUtcDateTime(c.created_at)}
             </div>
             <div>{c.text}</div>
           </div>
@@ -222,6 +238,12 @@ export default function AdminTicket() {
             </li>
           ))}
         </ul>
+        {isTerminal && (
+          <p className="muted">
+            This ticket is {t.status.toLowerCase()} — new attachments can no
+            longer be added. Existing attachments remain available above.
+          </p>
+        )}
       </div>
 
       <div className="card">
@@ -239,9 +261,7 @@ export default function AdminTicket() {
           <tbody>
             {history.map((h) => (
               <tr key={h.id}>
-                <td className="muted">
-                  {new Date(h.created_at).toLocaleString()}
-                </td>
+                <td className="muted">{formatUtcDateTime(h.created_at)}</td>
                 <td>{h.actor_name || "System"}</td>
                 <td>{h.action}</td>
                 <td>{h.field || ""}</td>

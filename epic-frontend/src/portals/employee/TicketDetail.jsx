@@ -2,17 +2,38 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../../api/client.js";
 import { Status, Priority, TicketType } from "../../components/Badges.jsx";
+import { useAuth, hasRole } from "../../auth/AuthContext.jsx";
+import { formatUtcDateTime } from "../../utils/time.js";
 
 export default function TicketDetail() {
   const { id } = useParams();
+  const { user } = useAuth();
   const [t, setT] = useState(null);
   const [history, setHistory] = useState([]);
   const [comment, setComment] = useState("");
   const [file, setFile] = useState(null);
   const [error, setError] = useState(null);
+  const [forbidden, setForbidden] = useState(false);
+  const isEngineer = hasRole(user, "IT_ENGINEER", "IT_MANAGER", "SYSTEM_ADMIN");
+  const isTerminal = t
+    ? ["CLOSED", "CANCELLED", "RESOLVED"].includes(t.status)
+    : false;
 
   async function load() {
-    setT(await api.get(`/tickets/${id}`));
+    const ticket = await api.get(`/tickets/${id}`);
+    if (
+      isEngineer &&
+      user?.id &&
+      ticket.creator?.id &&
+      ticket.creator.id !== user.id
+    ) {
+      setForbidden(true);
+      setT(null);
+      setHistory([]);
+      return;
+    }
+    setForbidden(false);
+    setT(ticket);
     setHistory(await api.get(`/audit/tickets/${id}`));
   }
   useEffect(() => {
@@ -53,6 +74,15 @@ export default function TicketDetail() {
     }
   }
 
+  if (forbidden) {
+    return (
+      <div className="content">
+        <h2>403 — Not authorized</h2>
+        <p>Employee portal tickets are limited to your own submissions.</p>
+      </div>
+    );
+  }
+
   if (!t) return <p>Loading…</p>;
   return (
     <>
@@ -63,7 +93,7 @@ export default function TicketDetail() {
         <TicketType value={t.ticket_type} /> <Status value={t.status} />{" "}
         <Priority value={t.priority} />
         <span className="muted">{t.category}</span>
-        {!["CLOSED", "CANCELLED", "RESOLVED"].includes(t.status) && (
+        {!isTerminal && (
           <button className="btn danger secondary" onClick={cancelTicket}>
             Cancel ticket
           </button>
@@ -74,9 +104,9 @@ export default function TicketDetail() {
         <h3>Details</h3>
         <dl className="kv">
           <dt>Created</dt>
-          <dd>{new Date(t.created_at).toLocaleString()}</dd>
+          <dd>{formatUtcDateTime(t.created_at)}</dd>
           <dt>Updated</dt>
-          <dd>{new Date(t.updated_at).toLocaleString()}</dd>
+          <dd>{formatUtcDateTime(t.updated_at)}</dd>
           <dt>Assignee</dt>
           <dd>
             {t.assignee?.display_name || (
@@ -93,7 +123,7 @@ export default function TicketDetail() {
           <div key={c.id} className="comment">
             <div className="muted">
               {c.author?.display_name || "Unknown"} ·{" "}
-              {new Date(c.created_at).toLocaleString()}
+              {formatUtcDateTime(c.created_at)}
             </div>
             <div>{c.text}</div>
           </div>
@@ -123,15 +153,24 @@ export default function TicketDetail() {
             </li>
           ))}
         </ul>
-        <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+        <input
+          type="file"
+          onChange={(e) => setFile(e.target.files[0])}
+          disabled={isTerminal}
+        />
         <button
           className="btn"
           onClick={uploadFile}
-          disabled={!file}
+          disabled={!file || isTerminal}
           style={{ marginLeft: 8 }}
         >
           Upload
         </button>
+        {isTerminal && (
+          <p className="muted" style={{ marginTop: 8 }}>
+            This ticket is {t.status.toLowerCase()} — attachments are read-only.
+          </p>
+        )}
       </div>
 
       <div className="card">
@@ -149,9 +188,7 @@ export default function TicketDetail() {
           <tbody>
             {history.map((h) => (
               <tr key={h.id}>
-                <td className="muted">
-                  {new Date(h.created_at).toLocaleString()}
-                </td>
+                <td className="muted">{formatUtcDateTime(h.created_at)}</td>
                 <td>{h.actor_name || "System"}</td>
                 <td>{h.action}</td>
                 <td>{h.field || ""}</td>

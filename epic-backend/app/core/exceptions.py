@@ -22,5 +22,11 @@ class Forbidden(DomainError):
     status_code = 403
 
 
+class StorageQuotaExceeded(DomainError):
+    """Resource Exhaustion (CWE-770): raised when an attachment upload would exceed the
+    per-ticket count/size cap or the per-user total storage cap."""
+    status_code = 413
+
+
 async def domain_error_handler(_request: Request, exc: DomainError):
     return JSONResponse(status_code=exc.status_code, content={"error": exc.__class__.__name__, "detail": exc.message})

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client.js";
 import { Status, Priority, TicketType } from "../../components/Badges.jsx";
+import { formatUtcDateTime } from "../../utils/time.js";
 
 export default function MyTickets() {
   const [tickets, setTickets] = useState([]);
@@ -9,11 +10,21 @@ export default function MyTickets() {
   const [status, setStatus] = useState("");
 
   async function load() {
-    const params = new URLSearchParams();
-    if (q) params.set("q", q);
-    if (status) params.set("status", status);
-    const r = await api.get("/search/tickets?" + params.toString());
-    setTickets(r.results || []);
+    const rows = await api.get("/tickets");
+    const filtered = (rows || []).filter((ticket) => {
+      if (status && ticket.status !== status) return false;
+      if (!q) return true;
+      const needle = q.toLowerCase();
+      return [
+        ticket.ticket_number,
+        ticket.title,
+        ticket.description,
+        ticket.category,
+      ]
+        .filter(Boolean)
+        .some((value) => value.toLowerCase().includes(needle));
+    });
+    setTickets(filtered);
   }
   useEffect(() => {
     load();
@@ -81,9 +92,7 @@ export default function MyTickets() {
                 <Priority value={t.priority} />
               </td>
               <td>{t.category}</td>
-              <td className="muted">
-                {new Date(t.created_at).toLocaleString()}
-              </td>
+              <td className="muted">{formatUtcDateTime(t.created_at)}</td>
             </tr>
           ))}
         </tbody>

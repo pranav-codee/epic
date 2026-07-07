@@ -8,6 +8,7 @@ export default function Users() {
   const [editing, setEditing] = useState(null);
   const [newRoles, setNewRoles] = useState([]);
   const [error, setError] = useState(null);
+  const [saveError, setSaveError] = useState(null);
 
   async function load() {
     try {
@@ -23,6 +24,7 @@ export default function Users() {
   function startEdit(u) {
     setEditing(u.id);
     setNewRoles(u.roles || []);
+    setSaveError(null);
   }
   function toggleRole(r) {
     setNewRoles(
@@ -31,11 +33,14 @@ export default function Users() {
   }
   async function save() {
     try {
+      setSaveError(null);
       await api.patch(`/users/${editing}/roles`, { roles: newRoles });
       setEditing(null);
       load();
     } catch (e) {
-      setError(e.message);
+      // e.g. "Cannot remove the SYSTEM_ADMIN role from the last remaining system
+      // administrator" — surface this next to the row being edited, not as a page-level error.
+      setSaveError(e.message);
     }
   }
 
@@ -103,6 +108,11 @@ export default function Users() {
                     >
                       Cancel
                     </button>
+                    {saveError && (
+                      <div className="error" style={{ marginTop: 6 }}>
+                        {saveError}
+                      </div>
+                    )}
                   </>
                 ) : (
                   <button

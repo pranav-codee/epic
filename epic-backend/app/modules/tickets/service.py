@@ -6,7 +6,7 @@ in router code. A future AI Orchestrator can call these functions directly to ob
 audit + notification behaviour without duplicating logic.
 """
 from datetime import datetime, timezone
-from sqlalchemy import update
+from sqlalchemy import update, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
@@ -18,7 +18,7 @@ from ..audit.service import Action
 from ..notifications import service as notifier
 from ..users.models import UserProfile
 from ...config import get_settings
-from ...core.exceptions import NotFound, Forbidden, DomainError
+from ...core.exceptions import NotFound, Forbidden, DomainError, StorageQuotaExceeded
 from ...core.rbac import Role
 
 
@@ -119,6 +119,8 @@ def reclassify_ticket(db: Session, *, ticket_id: str, ticket_type: str, actor) -
     if ticket_type not in TICKET_TYPES:
         raise DomainError(f"Invalid ticket_type. Allowed: {TICKET_TYPES}")
     ticket = get_ticket_or_404(db, ticket_id)
+    if ticket.status in (CLOSED, CANCELLED):
+        raise DomainError(f"Cannot reclassify a ticket in terminal state {ticket.status}")
     old = ticket.ticket_type
     if old == ticket_type:
         return ticket
@@ -135,9 +137,22 @@ def assign_ticket(db: Session, *, ticket_id: str, assignee_id: str, actor) -> Ti
     if not _is_engineer(actor):
         raise Forbidden("Only IT Engineers may assign tickets")
     ticket = get_ticket_or_404(db, ticket_id)
+    if ticket.status in (CLOSED, CANCELLED):
+        raise DomainError(f"Cannot assign a ticket in terminal state {ticket.status}")
     assignee = db.query(UserProfile).filter(UserProfile.id == assignee_id).one_or_none()
     if not assignee:
         raise NotFound("Assignee user not found")
+
+    # Broken Access Control fix: the UI dropdown previously listed every user (via GET /users)
+    # with no role filter, and the API never re-checked that the chosen assignee actually is
+    # support staff. Enforce it server-side — never trust the client to have filtered the list.
+    from ..users.models import UserRoleAssignment
+    assignee_roles = {r.role for r in db.query(UserRoleAssignment)
+                       .filter(UserRoleAssignment.user_id == assignee.id).all()}
+    support_roles = {Role.IT_ENGINEER.value, Role.IT_MANAGER.value, Role.SYSTEM_ADMIN.value}
+    if not assignee_roles & support_roles:
+        raise DomainError("Tickets can only be assigned to IT support staff "
+                          "(IT Engineer, IT Manager, or System Admin)")
 
     # State transition: OPEN -> ASSIGNED if currently OPEN; otherwise just record a re-assignment.
     old_assignee_id = ticket.assignee_id
@@ -192,11 +207,33 @@ def change_status(db: Session, *, ticket_id: str, target_status: str, actor) -> 
 
 
 def cancel_ticket(db: Session, *, ticket_id: str, actor) -> Ticket:
-    """Employees may cancel their own pre-resolved tickets; engineers may cancel any."""
+    """Employees may cancel their own pre-resolved tickets; engineers may cancel any.
+
+    Functional-defect fix: this used to delegate to `change_status(...)`, but that
+    function unconditionally requires `_is_engineer(actor)` — so an employee could
+    never reach CANCELLED for their own ticket even though this function's own
+    permission check just approved exactly that. The two checks contradicted each
+    other and made employee self-cancel unreachable. Perform the transition directly
+    here instead, using the permission check already done above.
+    """
     ticket = get_ticket_or_404(db, ticket_id)
     if not _is_engineer(actor) and ticket.creator_id != actor.id:
         raise Forbidden("You can only cancel your own tickets")
-    return change_status(db, ticket_id=ticket_id, target_status="CANCELLED", actor=actor)
+
+    event = event_for_target(ticket.status, "CANCELLED")
+    if event is None:
+        raise DomainError(f"No transition from {ticket.status} to CANCELLED")
+    old = ticket.status
+    ticket.status = next_state(ticket.status, event)
+
+    audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.STATUS_CHANGE,
+                 field="status", old_value=old, new_value=ticket.status)
+    audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.CANCELLED)
+    db.commit(); db.refresh(ticket)
+
+    notifier.dispatch(db, event="TICKET_CANCELLED", ticket=ticket, actor_name=actor.display_name,
+                      recipient_id=ticket.creator_id)
+    return ticket
 
 
 def change_priority(db: Session, *, ticket_id: str, priority: str, actor) -> Ticket:
@@ -205,6 +242,8 @@ def change_priority(db: Session, *, ticket_id: str, priority: str, actor) -> Tic
     if priority not in PRIORITIES:
         raise DomainError(f"Invalid priority. Allowed: {PRIORITIES}")
     ticket = get_ticket_or_404(db, ticket_id)
+    if ticket.status in (CLOSED, CANCELLED):
+        raise DomainError(f"Cannot change priority of a ticket in terminal state {ticket.status}")
     old = ticket.priority
     if old == priority:
         return ticket
@@ -237,11 +276,41 @@ def add_attachment(db: Session, *, ticket_id: str, file_name: str, content_type:
     ticket = get_ticket_or_404(db, ticket_id)
     _ensure_visibility(ticket, actor)
 
+    # Product decision (see cancel_ticket/change_priority terminal-state guards): once a
+    # ticket is CLOSED or CANCELLED it's frozen for further file uploads. Comments remain
+    # allowed on terminal tickets (people may want to leave a closing note), but attachments
+    # do not — there's no more workflow left for anyone to act on them.
+    if ticket.status in (CLOSED, CANCELLED):
+        raise DomainError(f"Cannot upload attachments to a ticket in terminal state {ticket.status}")
+
     s = get_settings()
     # Size is already enforced while streaming in the router (before this much of the file
     # is even buffered), but we re-check here too since this function can be called directly.
     if len(data) > s.ATTACHMENT_MAX_BYTES:
         raise DomainError(f"Attachment exceeds {s.ATTACHMENT_MAX_BYTES} bytes")
+
+    # Resource Exhaustion (CWE-770) fix: a single-file size cap alone doesn't stop someone
+    # from uploading unlimited files. Cap the number of attachments and total bytes per
+    # ticket, and total bytes per user across all their tickets.
+    existing_count = (db.query(func.count(TicketAttachment.id))
+                       .filter(TicketAttachment.ticket_id == ticket.id).scalar() or 0)
+    if existing_count >= s.ATTACHMENT_MAX_PER_TICKET:
+        raise StorageQuotaExceeded(
+            f"This ticket already has the maximum of {s.ATTACHMENT_MAX_PER_TICKET} attachments")
+
+    existing_ticket_bytes = (db.query(func.coalesce(func.sum(TicketAttachment.size_bytes), 0))
+                              .filter(TicketAttachment.ticket_id == ticket.id).scalar() or 0)
+    if existing_ticket_bytes + len(data) > s.ATTACHMENT_MAX_TOTAL_BYTES_PER_TICKET:
+        raise StorageQuotaExceeded(
+            f"This ticket has reached its {s.ATTACHMENT_MAX_TOTAL_BYTES_PER_TICKET}-byte "
+            "attachment storage limit")
+
+    existing_user_bytes = (db.query(func.coalesce(func.sum(TicketAttachment.size_bytes), 0))
+                            .filter(TicketAttachment.uploaded_by == actor.id).scalar() or 0)
+    if existing_user_bytes + len(data) > s.ATTACHMENT_MAX_TOTAL_BYTES_PER_USER:
+        raise StorageQuotaExceeded(
+            f"You have reached your {s.ATTACHMENT_MAX_TOTAL_BYTES_PER_USER}-byte total "
+            "attachment storage limit across all tickets")
 
     from .attachment_validation import validate_attachment
     try:

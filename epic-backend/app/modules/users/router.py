@@ -16,6 +16,18 @@ def list_users(q: str | None = None, db: Session = Depends(get_db),
     return [service.attach_roles(u, db) for u in users]
 
 
+@router.get("/support-staff", response_model=list[UserProfileOut])
+def list_support_staff(db: Session = Depends(get_db), me=Depends(get_current_user)):
+    """Assignee picklist for ticket assignment. Open to any IT support role — not just
+    SYSTEM_ADMIN — since IT_ENGINEER/IT_MANAGER are the ones REQ-4.3-9 actually expects to
+    assign tickets. Deliberately narrower than GET /users (which stays admin-only): this
+    returns only users who already hold a support role, not the full employee directory."""
+    if not (set(me.roles or []) & {Role.IT_ENGINEER.value, Role.IT_MANAGER.value, Role.SYSTEM_ADMIN.value}):
+        raise HTTPException(403, "Forbidden")
+    users = service.list_support_staff(db)
+    return [service.attach_roles(u, db) for u in users]
+
+
 @router.get("/{user_id}", response_model=UserProfileOut)
 def get_user(user_id: str, db: Session = Depends(get_db), me=Depends(get_current_user)):
     # Self or admin can read.
@@ -32,10 +44,10 @@ def get_user(user_id: str, db: Session = Depends(get_db), me=Depends(get_current
 def update_roles(user_id: str, payload: RoleUpdateIn, db: Session = Depends(get_db),
                  _admin=Depends(require_role(Role.SYSTEM_ADMIN))):
     try:
-        user = service.set_roles(db, user_id, payload.roles)
+        user = service.set_roles(db, user_id, payload.roles, actor_id=_admin.id)
         # A role change is a privilege change — force any existing session cookie to be
         # re-validated rather than letting an old (now-wrong) privilege level ride out its 8h.
-        service.revoke_sessions(db, user_id)
+        service.revoke_sessions(db, user_id, actor_id=_admin.id, reason="ROLE_CHANGE")
     except (ValueError, LookupError) as e:
         raise HTTPException(400, str(e))
     return service.attach_roles(user, db)
@@ -46,6 +58,6 @@ def force_logout(user_id: str, db: Session = Depends(get_db),
                  _admin=Depends(require_role(Role.SYSTEM_ADMIN))):
     """Immediately invalidates every session cookie currently held by this user."""
     try:
-        service.revoke_sessions(db, user_id)
+        service.revoke_sessions(db, user_id, actor_id=_admin.id, reason="FORCE_LOGOUT")
     except LookupError as e:
         raise HTTPException(404, str(e))

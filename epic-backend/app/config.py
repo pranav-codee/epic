@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     # --- Attachments ---
     ATTACHMENT_DIR: str = "./storage/attachments"
     ATTACHMENT_MAX_BYTES: int = 25 * 1024 * 1024   # 25 MB (default A2)
+    # Resource Exhaustion (CWE-770) fix: previously only a single-file size cap existed, so a
+    # user could still upload unlimited attachments (or unlimited total bytes) to a single
+    # ticket, or across all their tickets, and exhaust disk space. Add explicit caps.
+    ATTACHMENT_MAX_PER_TICKET: int = 20
+    ATTACHMENT_MAX_TOTAL_BYTES_PER_TICKET: int = 100 * 1024 * 1024    # 100 MB per ticket
+    ATTACHMENT_MAX_TOTAL_BYTES_PER_USER: int = 500 * 1024 * 1024      # 500 MB per user (all tickets)
     # ALLOWLIST, not a denylist: an attachment's extension AND sniffed content must both match
     # one of these entries. Denylists are trivially bypassed (rename, unlisted extension, etc).
     ATTACHMENT_ALLOWED_EXTENSIONS: str = ".png,.jpg,.jpeg,.gif,.pdf,.txt,.log,.csv,.docx,.xlsx,.pptx,.zip"
