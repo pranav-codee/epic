@@ -4,6 +4,7 @@ from sqlalchemy import Column, String, DateTime, ForeignKey, Text, BigInteger, I
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from ...database import Base
+from ...core.sla import sla_status as _compute_sla_status
 
 
 def _uuid() -> str:
@@ -38,6 +39,9 @@ class Ticket(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     resolved_at = Column(DateTime, nullable=True)
     closed_at = Column(DateTime, nullable=True)
+    # SLA (Service Level Agreement) target resolution deadline, set at creation time
+    # (and refreshed on priority change) from app.core.sla.SLA_HOURS_BY_PRIORITY.
+    sla_due_at = Column(DateTime, nullable=True)
 
     creator = relationship("UserProfile", foreign_keys=[creator_id])
     assignee = relationship("UserProfile", foreign_keys=[assignee_id])
@@ -51,6 +55,18 @@ class Ticket(Base):
         Index("ix_tickets_category", "category"),
         Index("ix_tickets_ticket_type", "ticket_type"),
     )
+
+    @property
+    def sla_status(self) -> str:
+        """One of NONE, ON_TRACK, AT_RISK, BREACHED, MET — derived, never stored directly
+        so it's always accurate as of "now" rather than going stale."""
+        return _compute_sla_status(
+            priority=self.priority,
+            created_at=self.created_at,
+            sla_due_at=self.sla_due_at,
+            resolved_at=self.resolved_at,
+            closed_at=self.closed_at,
+        )
 
 
 class TicketCounter(Base):

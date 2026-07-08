@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client.js";
 import { Status, Priority, TicketType } from "../../components/Badges.jsx";
+import { formatUtcDateTime } from "../../utils/time.js";
 
 export default function Queue() {
   const [tickets, setTickets] = useState([]);
@@ -120,6 +121,8 @@ export default function Queue() {
             <th>Status</th>
             <th>Priority</th>
             <th>Category</th>
+            <th>Created</th>
+            <th>Last updated</th>
           </tr>
         </thead>
         <tbody>
@@ -145,6 +148,8 @@ export default function Queue() {
                 <Priority value={t.priority} />
               </td>
               <td>{t.category}</td>
+              <td className="muted">{formatUtcDateTime(t.created_at)}</td>
+              <td className="muted">{formatUtcDateTime(t.updated_at)}</td>
             </tr>
           ))}
         </tbody>

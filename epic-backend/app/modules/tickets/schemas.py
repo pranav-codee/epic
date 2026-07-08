@@ -89,6 +89,8 @@ class TicketOut(BaseModel):
     updated_at: datetime
     resolved_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
+    sla_due_at: Optional[datetime] = None
+    sla_status: str = "NONE"
 
     class Config:
         from_attributes = True

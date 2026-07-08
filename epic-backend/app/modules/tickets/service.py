@@ -20,6 +20,7 @@ from ..users.models import UserProfile
 from ...config import get_settings
 from ...core.exceptions import NotFound, Forbidden, DomainError, StorageQuotaExceeded
 from ...core.rbac import Role
+from ...core.sla import compute_due_at
 
 
 # ---------- Helpers ----------
@@ -35,9 +36,9 @@ def _next_ticket_number(db: Session) -> str:
     concurrent requests.
 
     Fix: do the "+1" inside the UPDATE statement itself (`last_number = last_number + 1`).
-    That makes the increment atomic at the database level on every backend — SQLite included
-    — without needing dialect-specific locking, because no Python code ever computes the new
-    value from a value it read separately.
+    That makes the increment atomic at the database level on every backend — SQLite
+    included — without needing dialect-specific locking, because no Python code ever computes
+    the new value from a value it read separately.
     """
     year = datetime.utcnow().year
 
@@ -90,6 +91,7 @@ def create_ticket(db: Session, *, creator, title: str, description: str, ticket_
         raise DomainError(f"Invalid priority. Allowed: {PRIORITIES}")
 
     number = _next_ticket_number(db)
+    now = datetime.utcnow()
     t = Ticket(
         ticket_number=number,
         creator_id=creator.id,
@@ -99,6 +101,8 @@ def create_ticket(db: Session, *, creator, title: str, description: str, ticket_
         status="OPEN",
         title=title.strip(),
         description=description.strip(),
+        created_at=now,
+        sla_due_at=compute_due_at(priority, now),
     )
     db.add(t); db.flush()
 
@@ -248,6 +252,10 @@ def change_priority(db: Session, *, ticket_id: str, priority: str, actor) -> Tic
     if old == priority:
         return ticket
     ticket.priority = priority
+    # Re-baseline the SLA clock from the moment of re-prioritization — a ticket bumped to
+    # CRITICAL should get a fresh CRITICAL-length window rather than inheriting a due date
+    # computed under the old priority's (usually longer) target.
+    ticket.sla_due_at = compute_due_at(priority, datetime.utcnow())
     audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.PRIORITY_CHANGE,
                  field="priority", old_value=old, new_value=priority)
     db.commit(); db.refresh(ticket)
