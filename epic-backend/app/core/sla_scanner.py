@@ -15,12 +15,13 @@ two instances both sending the same escalation notification.
 Drop this file at: app/core/sla_scanner.py
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from .sla import sla_status as compute_sla_status
+from .time import utcnow
 from ..modules.tickets.models import Ticket
 from ..modules.audit import service as audit
 from ..modules.audit.models import TicketAuditLog
@@ -49,7 +50,7 @@ def _claim(db: Session, ticket_id: str, column: str) -> bool:
     result = db.execute(
         update(Ticket)
         .where(Ticket.id == ticket_id, getattr(Ticket, column).is_(None))
-        .values(**{column: datetime.utcnow()})
+        .values(**{column: utcnow()})
     )
     db.commit()
     return result.rowcount == 1
@@ -99,7 +100,7 @@ def _reclaim_orphaned_claims(db: Session) -> int:
     The grace period avoids a false positive against a claim that's genuinely still
     in-flight on another instance whose audit commit just hasn't landed yet.
     """
-    cutoff = datetime.utcnow() - timedelta(seconds=_STALE_CLAIM_GRACE_SECONDS)
+    cutoff = utcnow() - timedelta(seconds=_STALE_CLAIM_GRACE_SECONDS)
     reclaimed = 0
 
     for column, event in (

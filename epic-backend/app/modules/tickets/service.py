@@ -5,7 +5,6 @@ Design rule (NFR-5.4-7 extensibility): every mutation goes through this module, 
 in router code. A future AI Orchestrator can call these functions directly to obtain the same
 audit + notification behaviour without duplicating logic.
 """
-from datetime import datetime, timezone
 from sqlalchemy import update, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -21,6 +20,7 @@ from ...config import get_settings
 from ...core.exceptions import NotFound, Forbidden, DomainError, StorageQuotaExceeded
 from ...core.rbac import Role
 from ...core.sla import compute_due_at
+from ...core.time import utcnow
 
 
 # ---------- Helpers ----------
@@ -40,7 +40,7 @@ def _next_ticket_number(db: Session) -> str:
     included — without needing dialect-specific locking, because no Python code ever computes
     the new value from a value it read separately.
     """
-    year = datetime.utcnow().year
+    year = utcnow().year
 
     if db.query(TicketCounter).filter(TicketCounter.year == year).one_or_none() is None:
         db.add(TicketCounter(year=year, last_number=0))
@@ -91,7 +91,7 @@ def create_ticket(db: Session, *, creator, title: str, description: str, ticket_
         raise DomainError(f"Invalid priority. Allowed: {PRIORITIES}")
 
     number = _next_ticket_number(db)
-    now = datetime.utcnow()
+    now = utcnow()
     t = Ticket(
         ticket_number=number,
         creator_id=creator.id,
@@ -187,9 +187,9 @@ def change_status(db: Session, *, ticket_id: str, target_status: str, actor) -> 
     old = ticket.status
     ticket.status = new_state
     if new_state == RESOLVED:
-        ticket.resolved_at = datetime.utcnow()
+        ticket.resolved_at = utcnow()
     if new_state == CLOSED:
-        ticket.closed_at = datetime.utcnow()
+        ticket.closed_at = utcnow()
 
     audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.STATUS_CHANGE,
                  field="status", old_value=old, new_value=new_state)
@@ -255,7 +255,7 @@ def change_priority(db: Session, *, ticket_id: str, priority: str, actor) -> Tic
     # Re-baseline the SLA clock from the moment of re-prioritization — a ticket bumped to
     # CRITICAL should get a fresh CRITICAL-length window rather than inheriting a due date
     # computed under the old priority's (usually longer) target.
-    ticket.sla_due_at = compute_due_at(priority, datetime.utcnow())
+    ticket.sla_due_at = compute_due_at(priority, utcnow())
     # FIX: this reset was previously missing, even though models.py's column comment already
     # claimed it happened. Without it, a ticket already notified AT_RISK/BREACHED under its
     # *old* priority's SLA window kept those notified-at flags set after re-prioritization —

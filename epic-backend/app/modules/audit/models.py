@@ -6,8 +6,8 @@ associated ticket, but still need a tamper-evident, insert-only record (A09 - Se
 Logging and Monitoring Failure). Non-ticket events use the `action` values defined in
 audit/service.py (ROLE_GRANT, ROLE_REVOKE, FORCE_LOGOUT, LOGIN, LOGIN_FAILED)."""
 from sqlalchemy import Column, String, DateTime, ForeignKey, BigInteger, Integer, Text, Index
-from datetime import datetime
 from ...database import Base
+from ...core.time import utcnow
 
 
 class TicketAuditLog(Base):
@@ -21,7 +21,7 @@ class TicketAuditLog(Base):
     old_value = Column(String(256), nullable=True)
     new_value = Column(String(256), nullable=True)
     metadata_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 
     __table_args__ = (
         Index("ix_audit_actor_action", "actor_id", "action"),

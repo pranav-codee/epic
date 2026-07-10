@@ -2,8 +2,8 @@
 import uuid
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, PrimaryKeyConstraint
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from ...database import Base
+from ...core.time import utcnow
 
 
 def _uuid() -> str:
@@ -24,8 +24,8 @@ class UserProfile(Base):
     # and checked against the DB on every request.
     session_version = Column(String(36), default=_uuid, nullable=False)
     last_login_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
     role_assignments = relationship("UserRoleAssignment", cascade="all, delete-orphan", backref="user")
 

@@ -14,13 +14,14 @@ Fixes applied:
 """
 import json, asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import timedelta
 from sqlalchemy.orm import Session
 
 from .models import NotificationRecord
 from .channels.teams import TeamsChannel
 from .templates import build as build_payload
 from ..tickets.models import Ticket
+from ...core.time import utcnow
 
 _channel = TeamsChannel()
 
@@ -58,7 +59,7 @@ async def _send_and_record(record_id: str, title: str, text: str, facts: dict, a
         if ok:
             r.status = "SENT"
             r.error_message = None
-            r.sent_at = datetime.utcnow()
+            r.sent_at = utcnow()
             r.next_retry_at = None
         else:
             r.error_message = err
@@ -69,7 +70,7 @@ async def _send_and_record(record_id: str, title: str, text: str, facts: dict, a
             else:
                 r.status = "RETRYING"
                 delay = _BACKOFF_SECONDS[min(attempt - 1, len(_BACKOFF_SECONDS) - 1)]
-                r.next_retry_at = datetime.utcnow() + timedelta(seconds=delay)
+                r.next_retry_at = utcnow() + timedelta(seconds=delay)
         s.commit()
 
 
@@ -98,7 +99,7 @@ def retry_due(db: Session, *, batch_size: int = 50) -> int:
     Pick up any RETRYING notification whose backoff window has elapsed and resend it.
     Called periodically by notification_retry_loop.py. Returns the number retried.
     """
-    now = datetime.utcnow()
+    now = utcnow()
     due = (
         db.query(NotificationRecord)
         .filter(NotificationRecord.status == "RETRYING", NotificationRecord.next_retry_at <= now)

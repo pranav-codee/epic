@@ -1,7 +1,7 @@
 import uuid
 from sqlalchemy import Column, String, Boolean, DateTime, Text
-from datetime import datetime
 from ...database import Base
+from ...core.time import utcnow
 
 
 def _uuid() -> str:
@@ -17,5 +17,5 @@ class KnowledgeBaseArticle(Base):
     category = Column(String(64), nullable=True)
     tags = Column(String(512), nullable=True)
     published = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)

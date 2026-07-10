@@ -1,7 +1,7 @@
 import uuid
 from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Integer
-from datetime import datetime
 from ...database import Base
+from ...core.time import utcnow
 
 
 def _uuid() -> str:
@@ -19,7 +19,7 @@ class NotificationRecord(Base):
     status = Column(String(16), nullable=False, default="PENDING")
     payload_json = Column(Text, nullable=False)
     error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
     sent_at = Column(DateTime, nullable=True)
     # --- Retry bookkeeping (fixes: failed Teams sends were never retried) ---
     retry_count = Column(Integer, nullable=False, default=0)

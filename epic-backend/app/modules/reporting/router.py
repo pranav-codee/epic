@@ -7,6 +7,7 @@ from ...database import get_db
 from ...dependencies import get_current_user
 from ...core.rbac import require_role, Role, has_role
 from ...core.rate_limit import limiter
+from ...core.time import utcnow
 
 router = APIRouter()
 
@@ -62,7 +63,7 @@ def report_tickets(request: Request, group_by: str = "status", from_: str | None
 def export_excel(request: Request, db: Session = Depends(get_db),
                   _=Depends(require_role(*_DASHBOARD_ROLES))):
     content = service.build_excel_export(db)
-    filename = f"epic-dashboard-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.xlsx"
+    filename = f"epic-dashboard-{utcnow().strftime('%Y%m%d-%H%M')}.xlsx"
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -75,7 +76,7 @@ def export_excel(request: Request, db: Session = Depends(get_db),
 def export_pdf(request: Request, db: Session = Depends(get_db),
                 _=Depends(require_role(*_DASHBOARD_ROLES))):
     content = service.build_pdf_export(db)
-    filename = f"epic-dashboard-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.pdf"
+    filename = f"epic-dashboard-{utcnow().strftime('%Y%m%d-%H%M')}.pdf"
     return Response(
         content=content,
         media_type="application/pdf",

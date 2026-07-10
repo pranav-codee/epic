@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..tickets.models import Ticket, PRIORITIES
 from ...core.sla import SLA_HOURS_BY_PRIORITY, AT_RISK_THRESHOLD
+from ...core.time import utcnow
 
 OPEN_STATES = ("OPEN", "ASSIGNED", "IN_PROGRESS", "PENDING_USER")
 TREND_DAYS = 14
@@ -24,7 +25,7 @@ def _sla_breakdown(db: Session, now: datetime | None = None):
     ticked yet) or no longer AT_RISK but still show as having been escalated at
     some point during its lifetime.
     """
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     rows = db.query(
         Ticket.priority, Ticket.created_at, Ticket.resolved_at, Ticket.closed_at, Ticket.sla_due_at,
         Ticket.sla_at_risk_notified_at, Ticket.sla_breached_notified_at,
@@ -107,7 +108,7 @@ def _sla_breakdown(db: Session, now: datetime | None = None):
 
 
 def _trend(db: Session, days: int = TREND_DAYS, now: datetime | None = None):
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     since = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
     rows = (
         db.query(func.date(Ticket.created_at), func.count(Ticket.id))
@@ -202,7 +203,7 @@ def build_excel_export(db: Session) -> bytes:
     ws.title = "Summary"
     ws["A1"] = "EPIC Admin Dashboard — Summary"
     ws["A1"].font = title_font
-    ws["A2"] = f"Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC"
+    ws["A2"] = f"Generated {utcnow().strftime('%Y-%m-%d %H:%M')} UTC"
     ws["A2"].font = Font(italic=True, color="57606A")
 
     ws.append([])
@@ -306,7 +307,7 @@ def build_pdf_export(db: Session) -> bytes:
 
     story = [
         Paragraph("EPIC Admin Dashboard Report", title_style),
-        Paragraph(f"Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC", meta_style),
+        Paragraph(f"Generated {utcnow().strftime('%Y-%m-%d %H:%M')} UTC", meta_style),
         Spacer(1, 12),
     ]
 

@@ -2,9 +2,9 @@
 import uuid
 from sqlalchemy import Column, String, DateTime, ForeignKey, Text, BigInteger, Integer, Index
 from sqlalchemy.orm import relationship
-from datetime import datetime
 from ...database import Base
 from ...core.sla import sla_status as _compute_sla_status
+from ...core.time import utcnow
 
 
 def _uuid() -> str:
@@ -35,8 +35,8 @@ class Ticket(Base):
     status = Column(String(16), nullable=False, default="OPEN")
     title = Column(String(256), nullable=False)
     description = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
     resolved_at = Column(DateTime, nullable=True)
     closed_at = Column(DateTime, nullable=True)
     # SLA (Service Level Agreement) target resolution deadline, set at creation time
@@ -89,7 +89,7 @@ class TicketComment(Base):
     ticket_id = Column(String(36), ForeignKey("tickets.id"), nullable=False, index=True)
     author_id = Column(String(36), ForeignKey("user_profiles.id"), nullable=False)
     text = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 
     ticket = relationship("Ticket", back_populates="comments")
     author = relationship("UserProfile")
@@ -104,6 +104,6 @@ class TicketAttachment(Base):
     content_type = Column(String(128), nullable=True)
     size_bytes = Column(BigInteger, nullable=False)
     storage_uri = Column(String(512), nullable=False)
-    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    uploaded_at = Column(DateTime, default=utcnow, nullable=False)
 
     ticket = relationship("Ticket", back_populates="attachments")

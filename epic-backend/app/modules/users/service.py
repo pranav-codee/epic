@@ -3,11 +3,11 @@ User profile management. The primary call site is `upsert_from_identity(...)` wh
 invoked by the auth callback after Entra ID has authenticated the user.
 """
 import uuid
-from datetime import datetime
 from sqlalchemy.orm import Session
 from .models import UserProfile, UserRoleAssignment
 from ...config import get_settings
 from ...core.rbac import Role
+from ...core.time import utcnow
 from ..audit import service as audit
 from ..audit.service import Action
 
@@ -42,7 +42,7 @@ def upsert_from_identity(db: Session, *, entra_oid: str, email: str, display_nam
         user.display_name = display_name
         user.department = department or user.department
 
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = utcnow()
     db.commit()
     db.refresh(user)
     return user

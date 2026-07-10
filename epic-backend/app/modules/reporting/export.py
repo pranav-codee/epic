@@ -6,7 +6,8 @@ dashboard UI is showing. Kept dependency-light and synchronous — dashboard-siz
 (thousands of tickets, not millions) build in well under a second.
 """
 import io
-from datetime import datetime
+
+from ...core.time import utcnow
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
@@ -69,7 +70,7 @@ def build_excel(db: Session) -> io.BytesIO:
     ws.title = "Summary"
     ws.append(["EPIC Helpdesk — Dashboard Export"])
     ws["A1"].font = TITLE_FONT
-    ws.append([f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"])
+    ws.append([f"Generated: {utcnow().strftime('%Y-%m-%d %H:%M UTC')}"])
     ws["A2"].font = MUTED_FONT
     ws.append([])
     ws.append(["Metric", "Value"])
@@ -178,7 +179,7 @@ def build_pdf(db: Session) -> io.BytesIO:
 
     elements = [
         Paragraph("EPIC Helpdesk — Admin Dashboard Report", title_style),
-        Paragraph(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", muted_style),
+        Paragraph(f"Generated: {utcnow().strftime('%Y-%m-%d %H:%M UTC')}", muted_style),
         Spacer(1, 14),
         Paragraph("Summary", h2_style),
         _styled_table([

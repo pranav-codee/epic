@@ -7,6 +7,8 @@ hours from ticket creation (v1 — no business-hours calendar yet).
 """
 from datetime import datetime, timedelta
 
+from .time import utcnow
+
 # Resolution-time targets, in hours, per priority. Tune freely — every consumer
 # (ticket service + dashboard reporting) reads from this single source of truth.
 SLA_HOURS_BY_PRIORITY = {
@@ -22,7 +24,7 @@ AT_RISK_THRESHOLD = 0.2
 
 
 def compute_due_at(priority: str, from_time: datetime | None = None) -> datetime:
-    base = from_time or datetime.utcnow()
+    base = from_time or utcnow()
     hours = SLA_HOURS_BY_PRIORITY.get(priority, SLA_HOURS_BY_PRIORITY["MEDIUM"])
     return base + timedelta(hours=hours)
 
@@ -33,7 +35,7 @@ def sla_status(*, priority: str, created_at: datetime, sla_due_at: datetime | No
     """Returns one of: NONE, MET, BREACHED, AT_RISK, ON_TRACK."""
     if sla_due_at is None:
         return "NONE"
-    now = now or datetime.utcnow()
+    now = now or utcnow()
     end = resolved_at or closed_at
     if end is not None:
         return "MET" if end <= sla_due_at else "BREACHED"
