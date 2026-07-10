@@ -4,13 +4,16 @@ Mounts each SRS module under /api/v1/<module> so they remain independently testa
 """
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from .config import get_settings
 from .core.rate_limit import limiter
 from .core.exceptions import DomainError, domain_error_handler
-from .database import Base, engine
+from .database import Base, engine, SessionLocal
 from . import models  # noqa: F401  — ensures all models are registered
 
 from .modules.auth.router import router as auth_router
@@ -25,6 +28,12 @@ from .modules.reporting.router import router as reporting_router
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    # in create_app(), right after settings = get_settings()
+    if settings.APP_ENV == "prod":
+       if settings.SESSION_SECRET == "change-me-in-prod":
+           raise RuntimeError("SESSION_SECRET must be set to a real secret in production")
+       if settings.AUTH_PROVIDER == "mock":
+           raise RuntimeError("AUTH_PROVIDER=mock is not allowed when APP_ENV=prod")
     app = FastAPI(title="EPIC v1 — Enterprise Platform for Intelligent IT Collaboration", version="1.0.0")
 
     # CORS: tight allowlist; the Teams tab loads under teams.microsoft.com and tenant subdomains.
@@ -38,6 +47,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Free bandwidth/latency win: compress responses over 500 bytes (the default minimum_size).
+    # No architecture change, no client-side change needed — every modern browser and the
+    # Teams webview both send Accept-Encoding: gzip already.
+    app.add_middleware(GZipMiddleware, minimum_size=500)
 
     app.add_exception_handler(DomainError, domain_error_handler)
     app.state.limiter = limiter
@@ -55,7 +69,24 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["meta"])
     def health():
-        return {"status": "ok", "app": settings.APP_NAME, "env": settings.APP_ENV}
+        # The previous version of this endpoint only proved the FastAPI process was alive —
+        # it always returned 200 even if SQL Server was completely unreachable. A monitoring
+        # probe or load balancer health check needs to know the difference between "the app
+        # is up" and "the app is up but can't talk to its database," since only one of those
+        # is something worth paging someone about.
+        try:
+            with SessionLocal() as db:
+                db.execute(text("SELECT 1"))
+            db_ok = True
+        except Exception:
+            db_ok = False
+        status_code = 200 if db_ok else 503
+        return JSONResponse(
+            status_code=status_code,
+            content={"status": "ok" if db_ok else "degraded",
+                    "app": settings.APP_NAME, "env": settings.APP_ENV,
+                    "database": "ok" if db_ok else "unreachable"},
+        )
 
     # Dev convenience: auto-create tables if using SQLite. In production, use Alembic only.
     if settings.DATABASE_URL.startswith("sqlite"):

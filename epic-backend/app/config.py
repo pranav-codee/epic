@@ -63,6 +63,17 @@ class Settings(BaseSettings):
     # --- Misc ---
     BOOTSTRAP_ADMIN_EMAILS: str = ""   # comma-separated emails granted SYSTEM_ADMIN on first login
 
+    # --- Reverse proxy / rate limiting ---
+    # In production this app sits behind IIS/nginx, so every request's direct TCP peer is the
+    # proxy, not the real employee. Without this, slowapi's rate limiter would key on the
+    # proxy's IP for every single request — meaning all ~2,300 employees would share ONE
+    # rate-limit bucket instead of getting their own. List the proxy's IP(s) here so
+    # core/rate_limit.py knows when it's safe to trust the X-Forwarded-For header instead of
+    # the raw connection IP. Leave as 127.0.0.1 for local dev (the loopback the dev server
+    # itself runs on); set to the real reverse-proxy host's IP(s) in prod, comma-separated if
+    # there's more than one (e.g. an HA pair).
+    TRUSTED_PROXY_IPS: str = "127.0.0.1"
+
     @property
     def allowed_extensions(self) -> set[str]:
         return {e.strip().lower() for e in self.ATTACHMENT_ALLOWED_EXTENSIONS.split(",") if e.strip()}
@@ -74,6 +85,10 @@ class Settings(BaseSettings):
     @property
     def bootstrap_admin_emails_set(self) -> set[str]:
         return {e.strip().lower() for e in self.BOOTSTRAP_ADMIN_EMAILS.split(",") if e.strip()}
+
+    @property
+    def trusted_proxy_ips_set(self) -> set[str]:
+        return {ip.strip() for ip in self.TRUSTED_PROXY_IPS.split(",") if ip.strip()}
 
 
 @lru_cache
