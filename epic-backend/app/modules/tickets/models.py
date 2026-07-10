@@ -42,6 +42,13 @@ class Ticket(Base):
     # SLA (Service Level Agreement) target resolution deadline, set at creation time
     # (and refreshed on priority change) from app.core.sla.SLA_HOURS_BY_PRIORITY.
     sla_due_at = Column(DateTime, nullable=True)
+    # Set (once) by app.core.sla_scanner the first time this ticket is observed
+    # AT_RISK / BREACHED. A non-NULL value means "don't send this escalation again."
+    # Both reset to NULL whenever sla_due_at is recomputed (see change_priority in
+    # tickets/service.py) so a re-prioritized ticket gets a fresh notification cycle
+    # instead of being permanently "already notified" from its old SLA window.
+    sla_at_risk_notified_at = Column(DateTime, nullable=True)
+    sla_breached_notified_at = Column(DateTime, nullable=True)
 
     creator = relationship("UserProfile", foreign_keys=[creator_id])
     assignee = relationship("UserProfile", foreign_keys=[assignee_id])

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../../api/client.js";
-import { Status, Priority, TicketType } from "../../components/Badges.jsx";
+import { Status, Priority, TicketType, Sla } from "../../components/Badges.jsx";
 import { formatUtcDateTime } from "../../utils/time.js";
 
 const PRIORITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
@@ -15,6 +15,19 @@ const TICKET_TYPES = [
 // (never trust the client), but filtering here stops IT staff from accidentally picking
 // an employee from an unfiltered list in the first place.
 const SUPPORT_ROLES = ["IT_ENGINEER", "IT_MANAGER", "SYSTEM_ADMIN"];
+
+// Human-readable "time left" / "overdue by" string for an sla_due_at timestamp.
+// Purely a display convenience — the authoritative status is always t.sla_status from the API.
+function slaTimeLabel(dueAtIso) {
+  if (!dueAtIso) return null;
+  const due = new Date(/[zZ]$/.test(dueAtIso) ? dueAtIso : `${dueAtIso}Z`);
+  const diffMs = due.getTime() - Date.now();
+  const overdue = diffMs < 0;
+  const hours = Math.abs(diffMs) / 3600000;
+  const value =
+    hours >= 24 ? `${(hours / 24).toFixed(1)}d` : `${hours.toFixed(1)}h`;
+  return overdue ? `overdue by ${value}` : `${value} remaining`;
+}
 
 export default function AdminTicket() {
   const { id } = useParams();
@@ -93,7 +106,7 @@ export default function AdminTicket() {
       </h2>
       <div className="toolbar">
         <TicketType value={t.ticket_type} /> <Status value={t.status} />{" "}
-        <Priority value={t.priority} />{" "}
+        <Priority value={t.priority} /> <Sla value={t.sla_status} />{" "}
         <span className="muted">{t.category}</span>
       </div>
 
@@ -198,6 +211,35 @@ export default function AdminTicket() {
           <dd>{formatUtcDateTime(t.created_at)}</dd>
           <dt>Updated</dt>
           <dd>{formatUtcDateTime(t.updated_at)}</dd>
+          <dt>SLA status</dt>
+          <dd>
+            <Sla value={t.sla_status} />
+            {t.sla_due_at && (
+              <span className="muted" style={{ marginLeft: 8 }}>
+                due {formatUtcDateTime(t.sla_due_at)} (
+                {slaTimeLabel(t.sla_due_at)})
+              </span>
+            )}
+          </dd>
+          {(t.sla_at_risk_notified_at || t.sla_breached_notified_at) && (
+            <>
+              <dt>SLA escalations</dt>
+              <dd>
+                {t.sla_at_risk_notified_at && (
+                  <div className="muted">
+                    At-risk notice sent{" "}
+                    {formatUtcDateTime(t.sla_at_risk_notified_at)}
+                  </div>
+                )}
+                {t.sla_breached_notified_at && (
+                  <div className="muted">
+                    Breach notice sent{" "}
+                    {formatUtcDateTime(t.sla_breached_notified_at)}
+                  </div>
+                )}
+              </dd>
+            </>
+          )}
         </dl>
         <p style={{ whiteSpace: "pre-wrap", marginTop: 12 }}>{t.description}</p>
       </div>

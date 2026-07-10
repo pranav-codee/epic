@@ -19,6 +19,8 @@ class Action:
     ATTACHMENT_UPLOADED = "ATTACHMENT_UPLOADED"
     CLOSED = "CLOSED"
     CANCELLED = "CANCELLED"
+    # SLA scanner escalations (app.core.sla_scanner) — no human actor, actor_id is None.
+    SLA_ESCALATED = "SLA_ESCALATED"
 
     # --- System / account security events (no associated ticket) ---
     # These close the A09 (Security Logging & Monitoring Failure) gap: previously role

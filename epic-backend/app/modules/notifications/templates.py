@@ -58,6 +58,9 @@ def build(event: str, ticket: Ticket, *, actor_name: str | None = None, extra: d
         "TICKET_RESOLVED": f"Ticket resolved — {ticket.ticket_number}",
         "TICKET_CLOSED":   f"Ticket closed — {ticket.ticket_number}",
         "TICKET_CANCELLED": f"Ticket cancelled — {ticket.ticket_number}",
+        # NEW — app.core.sla_scanner escalations
+        "SLA_AT_RISK":     f"⚠ SLA at risk — {ticket.ticket_number}",
+        "SLA_BREACHED":    f"🔴 SLA breached — {ticket.ticket_number}",
     }
     title = title_map.get(event, f"Ticket event — {ticket.ticket_number}")
     # `ticket.title` is attacker-controlled free text — always sanitize before it is

@@ -233,6 +233,16 @@ export default function Dashboard() {
           label="SLA at risk"
           tone={sla.at_risk ? "warn" : "ok"}
         />
+        <Kpi
+          value={sla.escalations?.at_risk_notified ?? 0}
+          label="At-risk escalations sent"
+          tone={sla.escalations?.at_risk_notified ? "warn" : "ok"}
+        />
+        <Kpi
+          value={sla.escalations?.breached_notified ?? 0}
+          label="Breach escalations sent"
+          tone={sla.escalations?.breached_notified ? "danger" : "ok"}
+        />
       </div>
 
       {/* --- Trend --- */}
@@ -287,6 +297,14 @@ export default function Dashboard() {
       {/* --- SLA target reference --- */}
       <div className="card">
         <h3>SLA targets by priority</h3>
+        {sla.escalations?.last_escalation_at && (
+          <p className="muted" style={{ marginTop: -4, marginBottom: 12 }}>
+            Last escalation sent{" "}
+            {new Date(
+              sla.escalations.last_escalation_at + "Z",
+            ).toLocaleString()}
+          </p>
+        )}
         <table>
           <thead>
             <tr>

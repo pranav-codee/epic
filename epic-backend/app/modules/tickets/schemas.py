@@ -91,6 +91,11 @@ class TicketOut(BaseModel):
     closed_at: Optional[datetime] = None
     sla_due_at: Optional[datetime] = None
     sla_status: str = "NONE"
+    # Set once by app.core.sla_scanner the first time this ticket is observed AT_RISK/BREACHED —
+    # non-NULL means "an escalation notification for this state has already gone out." Exposed
+    # so the ticket detail UI can show escalation history, not just the current computed status.
+    sla_at_risk_notified_at: Optional[datetime] = None
+    sla_breached_notified_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

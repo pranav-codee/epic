@@ -60,6 +60,10 @@ class Settings(BaseSettings):
         "application/zip,application/x-zip-compressed"
     )
 
+    # --- SLA escalation scanner (app.core.sla_scanner / sla_scanner_loop) ---
+    SLA_SCAN_ENABLED: bool = True
+    SLA_SCAN_INTERVAL_SECONDS: int = 300   # 5 minutes; tune once real ticket volume is known
+
     # --- Misc ---
     BOOTSTRAP_ADMIN_EMAILS: str = ""   # comma-separated emails granted SYSTEM_ADMIN on first login
 

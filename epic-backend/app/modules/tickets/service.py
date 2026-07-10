@@ -256,6 +256,14 @@ def change_priority(db: Session, *, ticket_id: str, priority: str, actor) -> Tic
     # CRITICAL should get a fresh CRITICAL-length window rather than inheriting a due date
     # computed under the old priority's (usually longer) target.
     ticket.sla_due_at = compute_due_at(priority, datetime.utcnow())
+    # FIX: this reset was previously missing, even though models.py's column comment already
+    # claimed it happened. Without it, a ticket already notified AT_RISK/BREACHED under its
+    # *old* priority's SLA window kept those notified-at flags set after re-prioritization —
+    # so app.core.sla_scanner would treat it as "already handled" and silently skip notifying
+    # for its new (often much tighter) window. Clearing both gives a re-prioritized ticket a
+    # fresh notification cycle, matching the fresh sla_due_at it just got.
+    ticket.sla_at_risk_notified_at = None
+    ticket.sla_breached_notified_at = None
     audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.PRIORITY_CHANGE,
                  field="priority", old_value=old, new_value=priority)
     db.commit(); db.refresh(ticket)

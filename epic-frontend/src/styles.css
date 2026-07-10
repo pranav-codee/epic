@@ -217,7 +217,26 @@ tr:hover td {
   background: #f1eaff;
   color: #5a2da0;
 }
-
+.badge.sla-ON_TRACK {
+  background: #e6f4ea;
+  color: var(--ok);
+}
+.badge.sla-MET {
+  background: #e6f4ea;
+  color: var(--ok);
+}
+.badge.sla-AT_RISK {
+  background: #fdf2e1;
+  color: var(--warn);
+}
+.badge.sla-BREACHED {
+  background: #fbeaea;
+  color: var(--danger);
+}
+.badge.sla-NONE {
+  background: #eef0f3;
+  color: var(--text-muted);
+}
 .card {
   border: 1px solid var(--border);
   border-radius: 8px;

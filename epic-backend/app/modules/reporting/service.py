@@ -11,19 +11,43 @@ TREND_DAYS = 14
 
 
 def _sla_breakdown(db: Session, now: datetime | None = None):
-    """Single pass over (priority, created_at, resolved_at, closed_at, sla_due_at) to derive
-    SLA compliance, breach, and at-risk counts without pulling full Ticket rows."""
+    """Single pass over (priority, created_at, resolved_at, closed_at, sla_due_at,
+    sla_at_risk_notified_at, sla_breached_notified_at) to derive SLA compliance, breach,
+    at-risk, and escalation-notification counts without pulling full Ticket rows.
+
+    The escalation counts (`at_risk_escalated` / `breached_escalated`) reflect
+    app.core.sla_scanner activity: they count tickets that have ever had that
+    notification fire (the notified-at column is non-NULL), not just tickets
+    currently sitting in that state. This is what makes it possible for the
+    dashboard to show "escalations sent" as distinct from "currently at risk" —
+    e.g. a ticket can be currently AT_RISK but not yet escalated (scanner hasn't
+    ticked yet) or no longer AT_RISK but still show as having been escalated at
+    some point during its lifetime.
+    """
     now = now or datetime.utcnow()
     rows = db.query(
-        Ticket.priority, Ticket.created_at, Ticket.resolved_at, Ticket.closed_at, Ticket.sla_due_at
+        Ticket.priority, Ticket.created_at, Ticket.resolved_at, Ticket.closed_at, Ticket.sla_due_at,
+        Ticket.sla_at_risk_notified_at, Ticket.sla_breached_notified_at,
     ).all()
 
     met = breached = at_risk = on_track = no_sla = 0
     resolved_count = 0
     total_resolution_seconds = 0.0
     by_priority_resolution = {p: {"count": 0, "seconds": 0.0} for p in PRIORITIES}
+    at_risk_escalated = 0
+    breached_escalated = 0
+    last_escalation_at = None
 
-    for priority, created_at, resolved_at, closed_at, sla_due_at in rows:
+    for priority, created_at, resolved_at, closed_at, sla_due_at, at_risk_notified_at, breached_notified_at in rows:
+        if at_risk_notified_at is not None:
+            at_risk_escalated += 1
+            if last_escalation_at is None or at_risk_notified_at > last_escalation_at:
+                last_escalation_at = at_risk_notified_at
+        if breached_notified_at is not None:
+            breached_escalated += 1
+            if last_escalation_at is None or breached_notified_at > last_escalation_at:
+                last_escalation_at = breached_notified_at
+
         end = resolved_at or closed_at
         if end is not None:
             resolved_count += 1
@@ -72,6 +96,13 @@ def _sla_breakdown(db: Session, now: datetime | None = None):
         "avg_resolution_hours": avg_resolution_hours,
         "avg_resolution_hours_by_priority": avg_resolution_by_priority,
         "target_hours_by_priority": SLA_HOURS_BY_PRIORITY,
+        # NEW — app.core.sla_scanner escalation activity (historical, not point-in-time).
+        "escalations": {
+            "at_risk_notified": at_risk_escalated,
+            "breached_notified": breached_escalated,
+            "total_notified": at_risk_escalated + breached_escalated,
+            "last_escalation_at": last_escalation_at.isoformat() if last_escalation_at else None,
+        },
     }
 
 
@@ -178,6 +209,7 @@ def build_excel_export(db: Session) -> bytes:
     ws.append(["Metric", "Value"])
     style_header_row(ws, row_idx=4)
     sla = data["sla"]
+    esc = sla["escalations"]
     summary_rows = [
         ("Total tickets", data["total_tickets"]),
         ("Open tickets", data["open_tickets"]),
@@ -186,6 +218,8 @@ def build_excel_export(db: Session) -> bytes:
         ("SLA at risk", sla["at_risk"]),
         ("SLA on track", sla["on_track"]),
         ("Avg. resolution time (hours)", sla["avg_resolution_hours"]),
+        ("SLA escalations sent (at-risk)", esc["at_risk_notified"]),
+        ("SLA escalations sent (breached)", esc["breached_notified"]),
     ]
     for label, value in summary_rows:
         ws.append([label, value])
@@ -219,6 +253,13 @@ def build_excel_export(db: Session) -> bytes:
         ("Avg. resolution (hours)", sla["avg_resolution_hours"]),
     ]:
         sla_ws.append([label, value])
+    sla_ws.append([])
+    esc = sla["escalations"]
+    sla_ws.append(["SLA escalations sent (app.core.sla_scanner)", ""])
+    sla_ws.append(["At-risk notifications sent", esc["at_risk_notified"]])
+    sla_ws.append(["Breached notifications sent", esc["breached_notified"]])
+    sla_ws.append(["Total notifications sent", esc["total_notified"]])
+    sla_ws.append(["Most recent escalation (UTC)", esc["last_escalation_at"] or "—"])
     sla_ws.append([])
     sla_ws.append(["Target (hours) by priority", ""])
     for p, h in sla["target_hours_by_priority"].items():
@@ -301,6 +342,16 @@ def build_pdf_export(db: Session) -> bytes:
         ["At risk", str(sla["at_risk"])],
         ["On track", str(sla["on_track"])],
         ["No SLA target", str(sla["no_sla_target"])],
+    ]))
+
+    esc = sla["escalations"]
+    story.append(Paragraph("SLA escalations sent", section_style))
+    story.append(make_table([
+        ["Escalation type", "Notifications sent"],
+        ["At-risk", str(esc["at_risk_notified"])],
+        ["Breached", str(esc["breached_notified"])],
+        ["Total", str(esc["total_notified"])],
+        ["Most recent (UTC)", esc["last_escalation_at"] or "—"],
     ]))
 
     for title, mapping in [

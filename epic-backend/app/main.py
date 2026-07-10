@@ -92,6 +92,12 @@ def create_app() -> FastAPI:
     if settings.DATABASE_URL.startswith("sqlite"):
         Base.metadata.create_all(bind=engine)
 
+    # Periodic SLA at-risk/breach scan. Safe to run on every app instance behind the load
+    # balancer — see app/core/sla_scanner.py's atomic-claim logic for why this doesn't
+    # produce duplicate notifications.
+    from .core.sla_scanner_loop import start_background_loop
+    start_background_loop()
+
     return app
 
 
