@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Integer
 from datetime import datetime
 from ...database import Base
 
@@ -15,8 +15,12 @@ class NotificationRecord(Base):
     recipient_id = Column(String(36), ForeignKey("user_profiles.id"), nullable=True)
     channel = Column(String(32), nullable=False, default="TEAMS")
     event = Column(String(64), nullable=False)
-    status = Column(String(16), nullable=False, default="PENDING")  # PENDING | SENT | FAILED | SKIPPED
+    # PENDING | SENT | FAILED | RETRYING | DEAD_LETTER | SKIPPED
+    status = Column(String(16), nullable=False, default="PENDING")
     payload_json = Column(Text, nullable=False)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     sent_at = Column(DateTime, nullable=True)
+    # --- Retry bookkeeping (fixes: failed Teams sends were never retried) ---
+    retry_count = Column(Integer, nullable=False, default=0)
+    next_retry_at = Column(DateTime, nullable=True, index=True)

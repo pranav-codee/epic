@@ -20,10 +20,14 @@ def search_tickets(
     priority: str | None = None,
     employee_id: str | None = None,
     q: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
     db: Session = Depends(get_db),
     me=Depends(get_current_user),
 ):
-    total, rows = service.search(db, me=me, ticket_number=ticket_number,
-                                 status=status, ticket_type=ticket_type, category=category, priority=priority,
-                                 employee_id=employee_id, q=q)
-    return {"total": total, "results": rows}
+    total, rows, applied_limit, applied_offset = service.search(
+        db, me=me, ticket_number=ticket_number, status=status, ticket_type=ticket_type,
+        category=category, priority=priority, employee_id=employee_id, q=q,
+        limit=limit, offset=offset,
+    )
+    return {"total": total, "limit": applied_limit, "offset": applied_offset, "results": rows}

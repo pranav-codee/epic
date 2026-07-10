@@ -10,6 +10,13 @@ from ..users.models import UserProfile
 from ...core.rbac import Role
 
 
+# Fix: previously `limit` had no upper bound and no `offset`, and the router
+# never exposed either — callers were silently capped at the first 100 rows
+# with no way to page further. total_count is still returned so the frontend
+# can compute total pages.
+MAX_PAGE_SIZE = 200
+
+
 def search(db, *, me,
            ticket_number: str | None = None,
            status: str | None = None,
@@ -18,7 +25,10 @@ def search(db, *, me,
            priority: str | None = None,
            employee_id: str | None = None,
            q: str | None = None,
-           limit: int = 100):
+           limit: int = 100,
+           offset: int = 0):
+    limit = max(1, min(limit, MAX_PAGE_SIZE))
+    offset = max(0, offset)
     is_engineer = bool(set(me.roles or []) & {Role.IT_ENGINEER.value, Role.IT_MANAGER.value, Role.SYSTEM_ADMIN.value})
 
     query = db.query(Ticket).options(joinedload(Ticket.creator), joinedload(Ticket.assignee))
@@ -42,5 +52,7 @@ def search(db, *, me,
         query = query.filter(or_(Ticket.title.like(like), Ticket.description.like(like)))
 
     total = query.with_entities(func.count(Ticket.id)).scalar() or 0
-    results = query.order_by(Ticket.created_at.desc()).limit(limit).all()
-    return total, results
+    results = query.order_by(Ticket.created_at.desc()).offset(offset).limit(limit).all()
+    # Return the clamped values too, not just what was requested, so the caller
+    # (and the API response) reflects what was actually applied.
+    return total, results, limit, offset

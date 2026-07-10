@@ -5,4 +5,6 @@ from ..tickets.schemas import TicketOut
 
 class TicketSearchOut(BaseModel):
     total: int
+    limit: int
+    offset: int
     results: List[TicketOut]

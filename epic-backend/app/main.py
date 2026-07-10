@@ -98,6 +98,12 @@ def create_app() -> FastAPI:
     from .core.sla_scanner_loop import start_background_loop
     start_background_loop()
 
+    # Periodic retry sweep for notifications that failed on first send (e.g. a
+    # transient Teams webhook outage). Without this, a FAILED/RETRYING record
+    # just sits there forever and the recipient never finds out.
+    from .core.notification_retry_loop import start_background_loop as start_notification_retry_loop
+    start_notification_retry_loop()
+
     return app
 
 
