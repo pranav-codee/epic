@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from datetime import datetime
 from sqlalchemy.orm import Session
 from starlette.responses import Response
@@ -6,6 +6,7 @@ from . import service
 from ...database import get_db
 from ...dependencies import get_current_user
 from ...core.rbac import require_role, Role, has_role
+from ...core.rate_limit import limiter
 
 router = APIRouter()
 
@@ -13,25 +14,29 @@ _DASHBOARD_ROLES = (Role.IT_MANAGER, Role.SYSTEM_ADMIN, Role.IT_ENGINEER)
 
 
 @router.get("/overview")
-def overview(db: Session = Depends(get_db),
+@limiter.limit("30/minute")
+def overview(request: Request, db: Session = Depends(get_db),
              _=Depends(require_role(*_DASHBOARD_ROLES))):
     return service.overview(db)
 
 
 @router.get("/engineer/me")
-def my_workload(db: Session = Depends(get_db),
+@limiter.limit("30/minute")
+def my_workload(request: Request, db: Session = Depends(get_db),
                 me=Depends(require_role(Role.IT_ENGINEER, Role.IT_MANAGER, Role.SYSTEM_ADMIN))):
     return service.engineer_workload(db, me.id)
 
 
 @router.get("/engineer/{engineer_id}")
-def workload(engineer_id: str, db: Session = Depends(get_db),
+@limiter.limit("30/minute")
+def workload(engineer_id: str, request: Request, db: Session = Depends(get_db),
              _=Depends(require_role(Role.IT_MANAGER, Role.SYSTEM_ADMIN))):
     return service.engineer_workload(db, engineer_id)
 
 
 @router.get("/reports/tickets")
-def report_tickets(group_by: str = "status", from_: str | None = None, to: str | None = None,
+@limiter.limit("20/minute")
+def report_tickets(request: Request, group_by: str = "status", from_: str | None = None, to: str | None = None,
                    db: Session = Depends(get_db),
                    _=Depends(require_role(Role.IT_MANAGER, Role.SYSTEM_ADMIN))):
     try:
@@ -45,8 +50,16 @@ def report_tickets(group_by: str = "status", from_: str | None = None, to: str |
         raise HTTPException(400, str(e))
 
 
+# Export endpoints build a full workbook/PDF from scratch on every call (openpyxl /
+# reportlab, plus several DB aggregation queries) — the most expensive requests this
+# router serves. They previously had no rate limit at all, unlike every mutating
+# ticket endpoint elsewhere in the app; a single authenticated account looping this
+# could burn CPU/DB load with no server-side throttle. 10/minute is generous for
+# legitimate use (nobody re-exports the same dashboard multiple times a second) while
+# capping the worst case.
 @router.get("/export/excel")
-def export_excel(db: Session = Depends(get_db),
+@limiter.limit("10/minute")
+def export_excel(request: Request, db: Session = Depends(get_db),
                   _=Depends(require_role(*_DASHBOARD_ROLES))):
     content = service.build_excel_export(db)
     filename = f"epic-dashboard-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.xlsx"
@@ -58,7 +71,8 @@ def export_excel(db: Session = Depends(get_db),
 
 
 @router.get("/export/pdf")
-def export_pdf(db: Session = Depends(get_db),
+@limiter.limit("10/minute")
+def export_pdf(request: Request, db: Session = Depends(get_db),
                 _=Depends(require_role(*_DASHBOARD_ROLES))):
     content = service.build_pdf_export(db)
     filename = f"epic-dashboard-{datetime.utcnow().strftime('%Y%m%d-%H%M')}.pdf"

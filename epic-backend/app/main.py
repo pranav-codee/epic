@@ -28,12 +28,31 @@ from .modules.reporting.router import router as reporting_router
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    # in create_app(), right after settings = get_settings()
+
+    # Fail fast on an unrecognized AUTH_PROVIDER in any environment, not just prod.
+    # get_provider() (modules/auth/service.py) now also fails closed on this, but
+    # catching it here means a bad config never even starts accepting traffic,
+    # instead of failing on the first request to /login.
+    if settings.AUTH_PROVIDER not in ("entra", "mock"):
+        raise RuntimeError(
+            f"Unknown AUTH_PROVIDER={settings.AUTH_PROVIDER!r}. Expected 'entra' or 'mock'."
+        )
+
     if settings.APP_ENV == "prod":
-       if settings.SESSION_SECRET == "change-me-in-prod":
-           raise RuntimeError("SESSION_SECRET must be set to a real secret in production")
-       if settings.AUTH_PROVIDER == "mock":
-           raise RuntimeError("AUTH_PROVIDER=mock is not allowed when APP_ENV=prod")
+        if settings.SESSION_SECRET == "change-me-in-prod":
+            raise RuntimeError("SESSION_SECRET must be set to a real secret in production")
+        if settings.AUTH_PROVIDER == "mock":
+            raise RuntimeError("AUTH_PROVIDER=mock is not allowed when APP_ENV=prod")
+        if settings.FRONTEND_BASE_URL.startswith(("http://localhost", "http://127.0.0.1")):
+            # FRONTEND_BASE_URL is passed straight into CORSMiddleware's allow_origins
+            # below, with allow_credentials=True. Leaving it on the dev default in prod
+            # means the deployed API would trust cookies/credentials from whatever's
+            # running on *someone's* localhost:5173, not the real frontend.
+            raise RuntimeError(
+                "FRONTEND_BASE_URL is still a localhost dev default; set it to the real "
+                "frontend origin before running with APP_ENV=prod."
+            )
+
     app = FastAPI(title="EPIC v1 — Enterprise Platform for Intelligent IT Collaboration", version="1.0.0")
 
     # CORS: tight allowlist; the Teams tab loads under teams.microsoft.com and tenant subdomains.
