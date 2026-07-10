@@ -72,6 +72,32 @@ def create_app() -> FastAPI:
     # Teams webview both send Accept-Encoding: gzip already.
     app.add_middleware(GZipMiddleware, minimum_size=500)
 
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+
+        # HSTS: only meaningful (and only sent) over a connection that's actually HTTPS —
+        # sending it over plain HTTP in dev would be a lie the browser can't act on, and
+        # in prod every request already terminates TLS at the load balancer/APP_ENV=prod.
+        if settings.APP_ENV == "prod":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # Stop the browser from MIME-sniffing a response into executing as something
+        # other than its declared Content-Type (e.g. an uploaded attachment as HTML/JS).
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+        # Framing: EPIC is deliberately loaded inside an iframe by the Teams tab (see
+        # CORS allow_origin_regex above), so a blanket X-Frame-Options: DENY or even
+        # SAMEORIGIN would break that. CSP's frame-ancestors is the modern replacement
+        # and, unlike X-Frame-Options, supports multiple/wildcard sources — restrict
+        # framing to our own frontend origin and Teams' domains only.
+        response.headers["Content-Security-Policy"] = (
+            f"frame-ancestors 'self' {settings.FRONTEND_BASE_URL} "
+            "https://teams.microsoft.com https://*.teams.microsoft.com"
+        )
+
+        return response
+
     app.add_exception_handler(DomainError, domain_error_handler)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

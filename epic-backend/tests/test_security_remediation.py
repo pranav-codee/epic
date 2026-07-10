@@ -211,7 +211,15 @@ def test_role_change_and_force_logout_are_audited(db_session, client):
 
 def test_login_is_audited(db_session, client):
     from app.core.security import issue_oauth_state
-    state = issue_oauth_state("test-state-123")
+    from app.modules.auth.router import OAUTH_STATE_COOKIE_NAME
+
+    # /callback binds the `state` query param to a same-name cookie set by /login (CSRF
+    # fix). Generate a fresh nonce per call and set the matching cookie ourselves,
+    # rather than relying on a shared/hardcoded state string, so this test is
+    # order-independent and doesn't collide with any other test issuing a state token.
+    state = issue_oauth_state(f"test-state-{os.urandom(8).hex()}")
+    client.cookies.set(OAUTH_STATE_COOKIE_NAME, state)
+
     r = client.get(f"/api/v1/auth/callback?state={state}&email=newlogin@epl.local",
                    follow_redirects=False)
     assert r.status_code == 307
