@@ -95,14 +95,28 @@ def create_app() -> FastAPI:
     # Periodic SLA at-risk/breach scan. Safe to run on every app instance behind the load
     # balancer — see app/core/sla_scanner.py's atomic-claim logic for why this doesn't
     # produce duplicate notifications.
-    from .core.sla_scanner_loop import start_background_loop
+    from .core.sla_scanner_loop import start_background_loop, stop_background_loop as stop_sla_loop
     start_background_loop()
 
     # Periodic retry sweep for notifications that failed on first send (e.g. a
     # transient Teams webhook outage). Without this, a FAILED/RETRYING record
     # just sits there forever and the recipient never finds out.
-    from .core.notification_retry_loop import start_background_loop as start_notification_retry_loop
+    from .core.notification_retry_loop import (
+        start_background_loop as start_notification_retry_loop,
+        stop_background_loop as stop_notification_retry_loop,
+    )
     start_notification_retry_loop()
+
+    @app.on_event("shutdown")
+    def _stop_background_loops():
+        # FIX: both loops used to be fire-and-forget daemon threads with no shutdown
+        # hook anywhere — on a graceful stop (e.g. SIGTERM during a rolling deploy)
+        # the process could exit mid-scan/mid-sweep instead of letting each thread
+        # finish its current unit of work. Signal both to stop and give them a short,
+        # bounded window to exit cleanly; they remain daemon threads regardless, so a
+        # slow/blocked iteration still can't hang process shutdown indefinitely.
+        stop_sla_loop()
+        stop_notification_retry_loop()
 
     return app
 
