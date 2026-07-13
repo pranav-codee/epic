@@ -3,18 +3,18 @@
 Tracks /SPEC.md sections. Status is one of NOT STARTED / IN PROGRESS / DONE.
 Each future session should read this file first, then SPEC.md, before writing code.
 
-| §   | Title                         | Status             | Note                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --- | ----------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | Ticket data model             | DONE (foundations) | See "Session 1" below for what's additive-only vs. fully wired.                                                                                                                                                                                                                                                                                                                                                                      |
-| 2   | Assignment Groups             | DONE (foundations) | Model + seed data + read endpoints done. Admin CRUD deferred to §5 session.                                                                                                                                                                                                                                                                                                                                                          |
-| 3   | Status/workflow               | DONE (backend)     | New `workflow_status` field + ticket-type-specific state machine (INCIDENT / SERVICE_REQUEST) layered on top of the untouched generic `status`/state_machine.py. See "Session 2" below.                                                                                                                                                                                                                                              |
-| 4   | SLA model (business-hours)    | NOT STARTED        | Current SLA logic (core/sla.py, sla_scanner.py) is 24/7 wall-clock, keyed by priority only (not ticket_type × priority). Business-hours/timezone-aware calendar not started. `Location.timezone` (added this session) is there to support it. Session 2 added the _pause-clock bookkeeping_ fields (`sla_paused_at`/`sla_paused_total_seconds`) §3 requires, but not business-hours due-date math — that's still this section's job. |
-| 5   | Roles & Permissions (dynamic) | NOT STARTED        | Still on the fixed Role enum in core/rbac.py (EMPLOYEE/IT*ENGINEER/IT_MANAGER/SYSTEM_ADMIN). No DB-backed permission registry, no custom roles, no Vendor/FMS Technician \_role* (only the UserProfile.user_type=VENDOR foundation column exists — see §2 note).                                                                                                                                                                     |
-| 6   | Routing engine                | NOT STARTED        | No RoutingRule model/table. Tickets can carry an assignment_group_id (nullable) but nothing auto-assigns it yet — assignment_group_id is set to NULL unless a caller passes it explicitly. No monitoring-tool ingestion endpoint.                                                                                                                                                                                                    |
-| 7   | Escalation                    | NOT STARTED        | No change beyond existing SLA-scanner _notifications_ (which are informational, not reassignment).                                                                                                                                                                                                                                                                                                                                   |
-| 8   | Dashboard — 5 views           | NOT STARTED        | Existing reporting module (app/modules/reporting) predates this spec; not evaluated against the 5-view list yet.                                                                                                                                                                                                                                                                                                                     |
-| 9   | Security requirements         | ONGOING            | Applied within scope of what was touched each session (see session notes below); no new gaps knowingly introduced. Full review against §9 should happen again once §5/§6 add real authorization surface.                                                                                                                                                                                                                             |
-| 10  | Out of scope                  | N/A                | Reference only — nothing to implement.                                                                                                                                                                                                                                                                                                                                                                                               |
+| §   | Title                         | Status                         | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --- | ----------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Ticket data model             | DONE (foundations)             | See "Session 1" below for what's additive-only vs. fully wired.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2   | Assignment Groups             | DONE (foundations)             | Model + seed data + read endpoints done. Admin CRUD deferred to §5 session.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 3   | Status/workflow               | DONE (backend)                 | New `workflow_status` field + ticket-type-specific state machine (INCIDENT / SERVICE_REQUEST) layered on top of the untouched generic `status`/state_machine.py. See "Session 2" below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 4   | SLA model (business-hours)    | IN PROGRESS (Part 1 of 2 done) | **Part 1 (this session, Session 3): the standalone business-hours calculation engine is done** — `app/core/sla.py` gained `add_business_minutes`, `business_hours_elapsed`, `compute_business_hours_sla_due_dates`, `get_business_hours_sla_targets` (Mon-Fri 09:00-18:00 local, IANA-timezone-aware via `zoneinfo`, DST- and weekend-safe; 23 new unit tests in `tests/test_business_hours_sla.py`). **Part 2 is explicitly NOT done**: the engine is NOT wired into ticket creation, priority changes, status/workflow-status changes, or `sla_scanner.py` — `Ticket.sla_due_at`/`response_sla_status`/`resolution_sla_status` are still populated (or not) exactly as before this session, and the old 24/7 `compute_due_at`/`SLA_HOURS_BY_PRIORITY` path in `core/sla.py` is still the one actually in use. Do not assume wiring happened — see "Session 3" below for the full list of what's pending and the ticket_type/priority-naming assumptions made. |
+| 5   | Roles & Permissions (dynamic) | NOT STARTED                    | Still on the fixed Role enum in core/rbac.py (EMPLOYEE/IT*ENGINEER/IT_MANAGER/SYSTEM_ADMIN). No DB-backed permission registry, no custom roles, no Vendor/FMS Technician \_role* (only the UserProfile.user_type=VENDOR foundation column exists — see §2 note).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 6   | Routing engine                | NOT STARTED                    | No RoutingRule model/table. Tickets can carry an assignment_group_id (nullable) but nothing auto-assigns it yet — assignment_group_id is set to NULL unless a caller passes it explicitly. No monitoring-tool ingestion endpoint.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 7   | Escalation                    | NOT STARTED                    | No change beyond existing SLA-scanner _notifications_ (which are informational, not reassignment).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 8   | Dashboard — 5 views           | NOT STARTED                    | Existing reporting module (app/modules/reporting) predates this spec; not evaluated against the 5-view list yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 9   | Security requirements         | ONGOING                        | Applied within scope of what was touched each session (see session notes below); no new gaps knowingly introduced. Full review against §9 should happen again once §5/§6 add real authorization surface.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 10  | Out of scope                  | N/A                            | Reference only — nothing to implement.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## Session 1 (this session) — what was actually built for §1 and §2
 
@@ -183,12 +183,12 @@ modified); `create_app()` boots; `/openapi.json` confirms
    feedback disagrees with any of this, it's a one-file change (`workflow.py`'s two
    `_..._TRANSITIONS` dicts) with no model/migration impact.
 2. **`workflow_status` is additive, not a replacement for `status`.** The two fields serve
-   different purposes and both stay: `status` (generic OPEN/ASSIGNED/IN_PROGRESS/
+   different purposes and both stay: `status` (generic OPEN/ASSIGNED/IN*PROGRESS/
    PENDING_USER/RESOLVED/CLOSED/CANCELLED) still drives ticket visibility rules, attachment
    upload eligibility, cancellation, and the SLA scanner's "is this ticket terminal" check —
    none of that was touched. `workflow_status` is the new, finer-grained, ITIL-flavoured
    status SPEC §3 asks for. Wiring the frontend (Queue/TicketDetail/AdminTicket) to actually
-   _show and drive_ `workflow_status`, and deciding whether it should eventually retire
+   \_show and drive* `workflow_status`, and deciding whether it should eventually retire
    `status` for INCIDENT/SERVICE_REQUEST tickets, is deferred — same additive-first pattern
    Session 1 used for the category hierarchy vs. the flat `category` enum. No frontend files
    were touched this session.
@@ -211,3 +211,130 @@ modified); `create_app()` boots; `/openapi.json` confirms
 6. **`first_response_at` and the Met/Breached SLA-status fields are untouched.** SPEC §1
    already added these columns; populating them with real logic is explicitly SPEC §4's job,
    not §3's, so this session left them exactly as Session 1 delivered them.
+
+## Session 3 (this session) — SPEC §4, Part 1 of 2: standalone business-hours SLA engine
+
+**Scope reminder (read this before touching §4 again):** this was explicitly Part 1 of 2.
+This session built ONLY a standalone, pure-function business-hours SLA calculation engine.
+**It is NOT wired into ticket creation, priority changes, status/workflow-status changes, or
+`sla_scanner.py`.** No `tickets/service.py`, `tickets/router.py`, or `sla_scanner.py` file was
+touched this session. `Ticket.sla_due_at`, `response_sla_status`, `resolution_sla_status`,
+and the SLA scanner's escalation logic all behave exactly as they did before this session —
+still driven by the old 24/7 `compute_due_at()` / `SLA_HOURS_BY_PRIORITY` path. **Part 2 (a
+future session) is where that wiring happens** — swapping ticket creation/priority-change/
+status-change code over to call the new engine, deciding how `sla_paused_total_seconds`
+(from Session 2) subtracts out of the business-hours elapsed calculation, and updating
+`sla_scanner.py`'s AT_RISK/BREACHED math to use business hours instead of wall-clock hours.
+
+**What was built** — all in the existing `app/core/sla.py` (appended below the pre-existing
+24/7 engine, which is untouched line-for-line):
+
+- `BUSINESS_HOURS_START` / `BUSINESS_HOURS_END` / `BUSINESS_WEEKDAYS` — the Mon-Fri
+  09:00-18:00 local calendar, no holidays, per SPEC §4/§10.
+- `BUSINESS_HOURS_SLA_TARGETS` — the SPEC §4 matrix (P1: 15min/2hr, P2: 30min/4hr, P3:
+  60min/24hr, P4: 120min/48hr), stored in minutes for both clocks.
+- `BUSINESS_HOURS_SLA_PRIORITY_LEVELS` — maps this codebase's existing priority values
+  (CRITICAL/HIGH/MEDIUM/LOW, from `tickets/models.py: PRIORITIES`) onto SPEC §4's P1-P4
+  naming. See "Assumptions" below — SPEC.md never states this mapping explicitly.
+- `get_business_hours_sla_targets(ticket_type, priority)` — looks up the target minutes;
+  validates both inputs and raises `ValueError` on anything unrecognized (fail closed per
+  SPEC §9, even though nothing calls this yet).
+- `resolve_location_timezone(location)` — duck-typed `.timezone` accessor, so Part 2 can
+  pass a real `catalogue.models.Location` (already has the `.timezone` column, from the
+  §1/§2 session) without this module importing it (avoids a circular import — see below).
+- `business_hours_elapsed(start, end, timezone_name)` — business-hours-only time between
+  two naive-UTC datetimes. This is the piece Part 2/§3's "time remaining" and the SLA
+  scanner's AT_RISK/BREACHED math will consume, once wired in.
+- `add_business_minutes(start, minutes, timezone_name)` — adds N business minutes to a
+  naive-UTC start time, snapping forward to the next business-hours opening first if
+  `start` itself falls outside business hours.
+- `compute_business_hours_sla_due_dates(ticket_type, priority, start, timezone_name)` — the
+  §4 entry point: returns `{"response_due_at": ..., "resolution_due_at": ...}`, both
+  computed independently from the same `start` (SPEC §4: "Independent Response +
+  Resolution clocks").
+
+All datetimes in and out are **naive UTC**, matching the convention every existing
+DateTime column and `core/time.utcnow()` already use in this codebase — so Part 2 can
+assign a returned value straight into e.g. `Ticket.sla_due_at`-equivalent columns with no
+extra conversion.
+
+**Timezone library:** stdlib `zoneinfo` (PEP 615), not `pytz` — no new runtime dependency
+beyond adding `tzdata>=2024.1` to `pyproject.toml` (needed so `zoneinfo` has an IANA tz
+database on platforms/containers that don't ship one system-wide; this dev container
+already had one, but production shouldn't rely on that). Each business day's 09:00/18:00
+window is constructed directly against that calendar date rather than by adding
+`timedelta`s across days — that's what makes the DST-transition arithmetic correct, since
+`zoneinfo` recomputes the correct UTC offset for that specific local wall-clock moment
+regardless of what the offset was on a previous day.
+
+**Tests:** `tests/test_business_hours_sla.py`, 23 new tests, all passing (90 total
+backend tests now pass: 67 pre-existing + 23 new, zero modified). Covers, per this
+session's required scenarios: a mid-week same-day window, a window spanning a weekend, a
+window spanning a real DST transition (Europe/Warsaw, 2026-03-29 spring-forward — chosen
+because Mexico abolished DST nationally in 2022, so `America/Mexico_City` no longer
+actually observes it and wouldn't have exercised anything), and a window starting outside
+business hours (after-hours, before-open, and weekend-start variants). Also includes a
+"round-trip" invariant test (elapsed business hours between a start and its own computed
+due date must equal the minutes that were added) run against every priority's targets,
+both for the weekend case and the DST case, plus explicit input-validation tests
+(negative minutes, unknown timezone, unknown ticket_type/priority — SPEC §9 fail-closed).
+
+**Verified this session:** `python3 -m pytest -q` — 90 passed, 0 failed, 0 modified
+pre-existing tests; `create_app()` still boots (no import-order/circular-import issue
+introduced — see the circular-import note below).
+
+### Deliberate scope decisions / assumptions (read before continuing §4 Part 2)
+
+1. **Priority naming (P1-P4 vs CRITICAL/HIGH/MEDIUM/LOW) — SPEC.md never states this
+   mapping.** Assumed CRITICAL=P1, HIGH=P2, MEDIUM=P3, LOW=P4 (urgency-ordered match to
+   the existing `PRIORITIES` list order). If product intends something else (e.g. a
+   location- or VIP-based override of a ticket's effective SLA tier), only
+   `BUSINESS_HOURS_SLA_PRIORITY_LEVELS` needs to change — every other function is
+   parameterized off the resulting `"P1".."P4"` key, not off the raw priority string.
+2. **Targets do NOT vary by ticket_type, despite SPEC §4 literally saying "keyed by
+   (ticket_type × priority)."** The matrix SPEC §4 then gives has no ticket_type axis at
+   all — same four numbers regardless of INCIDENT/SERVICE_REQUEST/PROBLEM/
+   CHANGE_REQUEST. This isn't a silent guess: `get_business_hours_sla_targets()` still
+   takes and _validates_ `ticket_type` (so its signature already matches what a future
+   per-type matrix would need — Part 2 callers won't have to change), it just currently
+   maps every valid ticket_type to the same priority-only table. If product clarifies
+   real per-type targets, `BUSINESS_HOURS_SLA_TARGETS` is the one dict to extend into a
+   `{ticket_type: {priority: {...}}}` shape.
+3. **No holiday calendar** — implemented exactly as SPEC §10 flags it: Mon-Fri
+   09:00-18:00 local, every Saturday/Sunday non-business, no per-location or per-country
+   holiday exceptions. Matches the spec's own "flagged simplification."
+4. **`ticket_type`/`priority` local constants are duplicated, not imported, from
+   `tickets/models.py`.** `tickets/models.py` already does
+   `from ...core.sla import sla_status` — so `core/sla.py` importing `TICKET_TYPES` or
+   `PRIORITIES` back from `tickets/models.py` would create a circular import.
+   `BUSINESS_HOURS_SLA_TICKET_TYPES` is a local tuple that mirrors
+   `tickets/models.py: TICKET_TYPES` (INCIDENT/SERVICE_REQUEST/PROBLEM/CHANGE_REQUEST) —
+   keep them in sync manually if that list ever changes, since there's no import link
+   enforcing it.
+5. **`resolve_location_timezone()` does NOT import `catalogue.models.Location`** — it's a
+   duck-typed `getattr(location, "timezone", None)` helper instead. This keeps
+   `core/sla.py`'s new section dependency-free (no new coupling to the catalogue module)
+   for this "standalone engine" session; Part 2 can pass a real `Location` row straight
+   through it once wiring starts.
+6. **Nothing about `sla_paused_at`/`sla_paused_total_seconds` (Session 2) is consumed
+   here.** Part 1 only computes due-dates and elapsed-time from two given timestamps —
+   deciding _how_ accumulated pause seconds subtract out of a business-hours elapsed
+   calculation (e.g. do paused seconds need their own business-hours conversion, since a
+   pause could itself span outside business hours?) is a Part 2 design question, not
+   answered or guessed at in this session.
+7. **`response_due_at`/`resolution_due_at` are not yet persisted anywhere.** There's no
+   new column and no migration this session — `compute_business_hours_sla_due_dates()`
+   is a pure function Part 2 will call and then decide where to store the result (most
+   likely new/renamed columns on `Ticket`, replacing or sitting alongside the existing
+   `sla_due_at`). Deferred rather than guessed at, since the column design is a Part 2
+   (wiring) decision, not a Part 1 (engine) one.
+
+### Suggested next task
+
+SPEC §4 Part 2: wire `compute_business_hours_sla_due_dates()` into ticket creation (using
+`resolve_location_timezone(ticket.location)`) and priority changes, decide the
+`sla_paused_total_seconds` interaction (assumption #6 above), update `sla_scanner.py` to
+use `business_hours_elapsed()` for its AT_RISK/BREACHED math instead of the current 24/7
+`sla_status()`, and populate `response_sla_status`/`resolution_sla_status` for real. Until
+that lands, §5 (dynamic permissions) or §6 (routing engine) remain the other
+independently-startable options, same as noted after Session 2.
