@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
 
-from .models import Ticket, TicketComment, TicketAttachment, TicketCounter, CATEGORIES, PRIORITIES, STATUSES, TICKET_TYPES
+from .models import Ticket, TicketComment, TicketAttachment, TicketCounter, CATEGORIES, PRIORITIES, STATUSES, TICKET_TYPES, CHANNELS
 from .state_machine import next_state, event_for_target, allowed_target_states_for, RESOLVED, CLOSED, CANCELLED
 from ..audit import service as audit
 from ..audit.service import Action
@@ -82,19 +82,32 @@ def _is_engineer(user) -> bool:
 
 # ---------- Core mutations ----------
 
-def create_ticket(db: Session, *, creator, title: str, description: str, ticket_type: str, category: str, priority: str) -> Ticket:
+def create_ticket(db: Session, *, creator, title: str, description: str, ticket_type: str, category: str,
+                  priority: str, requestor_id: str | None = None, location_id: str | None = None,
+                  channel: str = "SELF_SERVICE", assignment_group_id: str | None = None,
+                  device_name: str | None = None, device_ip_address: str | None = None,
+                  device_site_name: str | None = None) -> Ticket:
     if ticket_type not in TICKET_TYPES:
         raise DomainError(f"Invalid ticket_type. Allowed: {TICKET_TYPES}")
     if category not in CATEGORIES:
         raise DomainError(f"Invalid category. Allowed: {CATEGORIES}")
     if priority not in PRIORITIES:
         raise DomainError(f"Invalid priority. Allowed: {PRIORITIES}")
+    if channel not in CHANNELS:
+        raise DomainError(f"Invalid channel. Allowed: {CHANNELS}")
 
     number = _next_ticket_number(db)
     now = utcnow()
+
+    # SPEC §1: location is auto-filled from the creator's home_location at creation, but the
+    # caller (e.g. an agent logging on someone's behalf) may override it explicitly.
+    effective_location_id = location_id or getattr(creator, "home_location_id", None)
+
     t = Ticket(
         ticket_number=number,
         creator_id=creator.id,
+        # SPEC §1: requestor vs created_by — defaults to the creator when nobody else is named.
+        requestor_id=requestor_id or creator.id,
         ticket_type=ticket_type,
         category=category,
         priority=priority,
@@ -103,6 +116,12 @@ def create_ticket(db: Session, *, creator, title: str, description: str, ticket_
         description=description.strip(),
         created_at=now,
         sla_due_at=compute_due_at(priority, now),
+        location_id=effective_location_id,
+        channel=channel,
+        assignment_group_id=assignment_group_id,
+        device_name=device_name if channel == "MONITORING_TOOL" else None,
+        device_ip_address=device_ip_address if channel == "MONITORING_TOOL" else None,
+        device_site_name=device_site_name if channel == "MONITORING_TOOL" else None,
     )
     db.add(t); db.flush()
 

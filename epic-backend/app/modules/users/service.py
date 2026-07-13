@@ -150,3 +150,19 @@ def attach_roles(user: UserProfile, db: Session) -> UserProfile:
     """Attach roles as a list on the transient .roles attribute (used by API serializers)."""
     user.roles = [r.role for r in db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == user.id).all()]
     return user
+
+
+def set_home_location(db: Session, user_id: str, location_id: str, *, actor_id: str | None = None) -> UserProfile:
+    """SPEC §1: user.home_location feeds ticket auto-fill at creation. Self-service (any
+    user may set their own) or admin-set for someone else — the router enforces that."""
+    from ..catalogue.models import Location
+    user = db.query(UserProfile).filter(UserProfile.id == user_id).one_or_none()
+    if not user:
+        raise LookupError("User not found")
+    loc = db.query(Location).filter(Location.id == location_id, Location.is_active.is_(True)).one_or_none()
+    if not loc:
+        raise ValueError("Location not found or inactive")
+    user.home_location_id = loc.id
+    db.commit()
+    db.refresh(user)
+    return user

@@ -24,6 +24,7 @@ from .modules.notifications.router import router as notifications_router
 from .modules.search.router import router as search_router
 from .modules.knowledge_base.router import router as kb_router
 from .modules.reporting.router import router as reporting_router
+from .modules.catalogue.router import router as catalogue_router
 
 
 def create_app() -> FastAPI:
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(search_router, prefix=f"{api_prefix}/search", tags=["search"])
     app.include_router(kb_router, prefix=f"{api_prefix}/kb", tags=["knowledge-base"])
     app.include_router(reporting_router, prefix=f"{api_prefix}/dashboard", tags=["dashboard"])
+    app.include_router(catalogue_router, prefix=f"{api_prefix}/catalogue", tags=["catalogue"])
 
     @app.get("/health", tags=["meta"])
     def health():

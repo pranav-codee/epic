@@ -1,4 +1,8 @@
 """Aggregator import so Alembic + tests can pick up every ORM model in one place."""
+from .modules.catalogue.models import (  # noqa
+    Location, AssignmentGroup, UserAssignmentGroup,
+    CatalogueCategory, CatalogueSubcategory, CatalogueItem,
+)
 from .modules.users.models import UserProfile, UserRoleAssignment  # noqa
 from .modules.tickets.models import Ticket, TicketComment, TicketAttachment  # noqa
 from .modules.audit.models import TicketAuditLog  # noqa

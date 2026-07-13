@@ -31,7 +31,11 @@ def create_ticket(request: Request, payload: TicketCreateIn, db: Session = Depen
     except ValueError as e:
         raise HTTPException(400, str(e))
     t = service.create_ticket(db, creator=me, title=payload.title, description=payload.description,
-                              ticket_type=payload.ticket_type, category=payload.category, priority=payload.priority)
+                              ticket_type=payload.ticket_type, category=payload.category, priority=payload.priority,
+                              requestor_id=payload.requestor_id, location_id=payload.location_id,
+                              channel=payload.channel or "SELF_SERVICE",
+                              device_name=payload.device_name, device_ip_address=payload.device_ip_address,
+                              device_site_name=payload.device_site_name)
     return t
 
 

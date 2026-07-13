@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from . import service
-from .schemas import UserProfileOut, RoleUpdateIn
+from .schemas import UserProfileOut, RoleUpdateIn, HomeLocationUpdateIn
 from ...database import get_db
 from ...dependencies import get_current_user
 from ...core.rbac import require_role, Role
@@ -61,3 +61,19 @@ def force_logout(user_id: str, db: Session = Depends(get_db),
         service.revoke_sessions(db, user_id, actor_id=_admin.id, reason="FORCE_LOGOUT")
     except LookupError as e:
         raise HTTPException(404, str(e))
+
+
+@router.patch("/{user_id}/home-location", response_model=UserProfileOut)
+def update_home_location(user_id: str, payload: HomeLocationUpdateIn, db: Session = Depends(get_db),
+                         me=Depends(get_current_user)):
+    """Self or admin may set a user's home_location (SPEC §1: drives ticket auto-fill)."""
+    is_admin = Role.SYSTEM_ADMIN.value in (me.roles or [])
+    if user_id != me.id and not is_admin:
+        raise HTTPException(403, "Forbidden")
+    try:
+        user = service.set_home_location(db, user_id, payload.location_id, actor_id=me.id)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return service.attach_roles(user, db)
