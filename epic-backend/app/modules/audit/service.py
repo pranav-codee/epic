@@ -13,6 +13,10 @@ class Action:
     CREATE = "CREATE"
     ASSIGN = "ASSIGN"
     STATUS_CHANGE = "STATUS_CHANGE"
+    # SPEC §3: ticket-type-specific workflow_status transition (PROGRESSING/ON_HOLD/
+    # PEND_3RDPARTY/PEND_USER/APPROVED/RESOLVED or .../IN_APPROVAL/FULFILLED) — distinct from
+    # STATUS_CHANGE above, which tracks the pre-existing generic `status` field.
+    WORKFLOW_STATUS_CHANGE = "WORKFLOW_STATUS_CHANGE"
     PRIORITY_CHANGE = "PRIORITY_CHANGE"
     TYPE_CHANGE = "TYPE_CHANGE"
     COMMENT_ADDED = "COMMENT_ADDED"

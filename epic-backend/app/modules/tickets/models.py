@@ -46,6 +46,13 @@ class Ticket(Base):
     title = Column(String(256), nullable=False)
     description = Column(Text, nullable=False)
 
+    # --- SPEC §3: ticket-type-specific workflow status ---
+    # Additive alongside `status` above (see workflow.py module docstring for why the two
+    # coexist). NULL for ticket types SPEC §3 doesn't define a workflow for
+    # (PROBLEM/CHANGE_REQUEST) and, transiently, for any pre-existing row created before this
+    # column existed. INCIDENT/SERVICE_REQUEST tickets get it populated at creation time.
+    workflow_status = Column(String(24), nullable=True, index=True)
+
     # --- SPEC §1: location ---
     # Required per spec, auto-filled from the creator's home_location at ticket creation but
     # editable/overridable afterward. Left nullable at the DB level this session (existing
@@ -94,6 +101,17 @@ class Ticket(Base):
     # Free text, required server-side (app-layer, not a DB constraint) once either SLA status
     # above is BREACHED — that validation belongs with the SLA-phase logic in SPEC §4.
     breached_reason = Column(Text, nullable=True)
+
+    # --- SPEC §3: "Resolution SLA clock pauses during PEND_USER/PEND_3RDPARTY" ---
+    # This session implements the pause/resume *bookkeeping* only — not the business-hours
+    # SLA calculation itself (that's SPEC §4, still a later session). `sla_paused_at` is the
+    # timestamp the ticket most recently entered a pause workflow_status, or NULL when not
+    # currently paused. `sla_paused_total_seconds` accumulates the total time spent paused
+    # across the ticket's lifetime, so whenever §4's business-hours engine lands it has
+    # everything it needs to subtract paused time from the resolution clock without having to
+    # replay the full audit-log history.
+    sla_paused_at = Column(DateTime, nullable=True)
+    sla_paused_total_seconds = Column(Integer, nullable=False, default=0, server_default="0")
 
     # --- SPEC §1: misc nullable flags ---
     vendor_ticket_id = Column(String(64), nullable=True)

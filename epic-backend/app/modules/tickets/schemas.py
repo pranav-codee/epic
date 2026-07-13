@@ -43,6 +43,12 @@ class StatusChangeIn(BaseModel):
     target_status: str
 
 
+class WorkflowStatusChangeIn(BaseModel):
+    """SPEC §3: target for the ticket-type-specific workflow (distinct from StatusChangeIn's
+    `target_status`, which drives the pre-existing generic `status` field)."""
+    target_workflow_status: str
+
+
 class PriorityChangeIn(BaseModel):
     priority: str
 
@@ -94,6 +100,11 @@ class TicketOut(BaseModel):
     category: str
     priority: str
     status: str
+    # SPEC §3 — additive alongside `status`; see workflow.py module docstring. NULL for
+    # PROBLEM/CHANGE_REQUEST tickets and any ticket predating this column.
+    workflow_status: Optional[str] = None
+    sla_paused_at: Optional[datetime] = None
+    sla_paused_total_seconds: int = 0
     creator: Optional[UserBrief] = None
     requestor: Optional[UserBrief] = None
     assignee: Optional[UserBrief] = None
@@ -129,3 +140,8 @@ class TicketDetailOut(TicketOut):
     comments: List[TicketCommentOut] = []
     attachments: List[TicketAttachmentOut] = []
     allowed_target_states: List[str] = []
+    # SPEC §3 — direct workflow_status targets reachable from the ticket's current
+    # workflow_status, for UI button rendering (mirrors allowed_target_states above, which
+    # covers the pre-existing generic `status` field). Empty for ticket types with no §3
+    # workflow (PROBLEM/CHANGE_REQUEST) or a ticket already in a terminal legacy status.
+    allowed_workflow_target_states: List[str] = []

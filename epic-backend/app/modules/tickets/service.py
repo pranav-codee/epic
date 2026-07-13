@@ -12,6 +12,7 @@ from sqlalchemy.orm import joinedload
 
 from .models import Ticket, TicketComment, TicketAttachment, TicketCounter, CATEGORIES, PRIORITIES, STATUSES, TICKET_TYPES, CHANNELS
 from .state_machine import next_state, event_for_target, allowed_target_states_for, RESOLVED, CLOSED, CANCELLED
+from . import workflow as wf
 from ..audit import service as audit
 from ..audit.service import Action
 from ..notifications import service as notifier
@@ -80,6 +81,24 @@ def _is_engineer(user) -> bool:
     return bool(set(user.roles or []) & {Role.IT_ENGINEER.value, Role.IT_MANAGER.value, Role.SYSTEM_ADMIN.value})
 
 
+# ---------- SPEC §3: Resolution SLA pause-clock bookkeeping ----------
+# See workflow.py module docstring and models.py's sla_paused_at/sla_paused_total_seconds
+# comments: this session tracks *when* the ticket was paused and *how long* it has spent
+# paused in total, so a later §4 business-hours SLA engine can subtract that time without
+# replaying the audit log. It intentionally does not compute due-date shifts itself.
+
+def _start_sla_pause(ticket: Ticket) -> None:
+    if ticket.sla_paused_at is None:
+        ticket.sla_paused_at = utcnow()
+
+
+def _end_sla_pause(ticket: Ticket) -> None:
+    if ticket.sla_paused_at is not None:
+        elapsed = (utcnow() - ticket.sla_paused_at).total_seconds()
+        ticket.sla_paused_total_seconds = (ticket.sla_paused_total_seconds or 0) + max(0, int(elapsed))
+        ticket.sla_paused_at = None
+
+
 # ---------- Core mutations ----------
 
 def create_ticket(db: Session, *, creator, title: str, description: str, ticket_type: str, category: str,
@@ -112,6 +131,9 @@ def create_ticket(db: Session, *, creator, title: str, description: str, ticket_
         category=category,
         priority=priority,
         status="OPEN",
+        # SPEC §3: INCIDENT/SERVICE_REQUEST tickets start their type-specific workflow at
+        # PROGRESSING; PROBLEM/CHANGE_REQUEST have no §3-defined workflow (stays NULL).
+        workflow_status=wf.initial_workflow_status(ticket_type),
         title=title.strip(),
         description=description.strip(),
         created_at=now,
@@ -148,8 +170,24 @@ def reclassify_ticket(db: Session, *, ticket_id: str, ticket_type: str, actor) -
     if old == ticket_type:
         return ticket
     ticket.ticket_type = ticket_type
+    # SPEC §3: workflow_status is scoped to ticket_type (INCIDENT vs SERVICE_REQUEST have
+    # different — and differently-named — terminal/approval states, so an old value from the
+    # previous type would be meaningless, or worse, silently valid-looking under the new
+    # type's transition graph). Reclassifying always resets to that type's initial state (or
+    # NULL if the new type has no §3 workflow) rather than trying to map states across the two
+    # graphs — there's no spec-defined equivalence between e.g. INCIDENT's APPROVED and
+    # SERVICE_REQUEST's IN_APPROVAL to justify carrying progress over. Any accumulated SLA
+    # pause time is preserved either way since that's tracked on the ticket, not the state.
+    old_workflow_status = ticket.workflow_status
+    if wf.is_pause_state(old_workflow_status) and ticket.sla_paused_at is not None:
+        _end_sla_pause(ticket)
+    ticket.workflow_status = wf.initial_workflow_status(ticket_type)
     audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.TYPE_CHANGE,
                  field="ticket_type", old_value=old, new_value=ticket_type)
+    if old_workflow_status != ticket.workflow_status:
+        audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.WORKFLOW_STATUS_CHANGE,
+                     field="workflow_status", old_value=old_workflow_status, new_value=ticket.workflow_status,
+                     metadata={"reason": "ticket_type_changed"})
     db.commit(); db.refresh(ticket)
     notifier.dispatch(db, event="TICKET_UPDATED", ticket=ticket, actor_name=actor.display_name,
                       recipient_id=ticket.creator_id)
@@ -209,6 +247,11 @@ def change_status(db: Session, *, ticket_id: str, target_status: str, actor) -> 
         ticket.resolved_at = utcnow()
     if new_state == CLOSED:
         ticket.closed_at = utcnow()
+    if new_state in (RESOLVED, CLOSED, CANCELLED) and ticket.sla_paused_at is not None:
+        # A ticket can reach a terminal legacy status while workflow_status is still sitting
+        # in a pause state (e.g. an engineer resolves via this endpoint rather than the §3
+        # workflow-status one) — stop the pause clock either way so it never runs forever.
+        _end_sla_pause(ticket)
 
     audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.STATUS_CHANGE,
                  field="status", old_value=old, new_value=new_state)
@@ -224,6 +267,77 @@ def change_status(db: Session, *, ticket_id: str, target_status: str, actor) -> 
         "CANCELLED": "TICKET_CANCELLED",
     }
     notif_event = event_map.get(new_state, "TICKET_UPDATED")
+    notifier.dispatch(db, event=notif_event, ticket=ticket, actor_name=actor.display_name,
+                      recipient_id=ticket.creator_id)
+    return ticket
+
+
+def change_workflow_status(db: Session, *, ticket_id: str, target_workflow_status: str, actor) -> Ticket:
+    """SPEC §3: move a ticket through its ticket-type-specific workflow
+    (PROGRESSING/ON_HOLD/PEND_3RDPARTY/PEND_USER/APPROVED/RESOLVED for Incidents;
+    PROGRESSING/ON_HOLD/PEND_3RDPARTY/PEND_USER/IN_APPROVAL/FULFILLED for Service Requests).
+
+    Same permission model as change_status (only IT staff drive workflow — SPEC §9's
+    fail-closed requirement applies here exactly as it does to the existing endpoint this
+    mirrors). Also starts/stops the SLA pause clock (see _start_sla_pause/_end_sla_pause)
+    and mirrors terminal states into `resolved_at` so existing SLA-status/reporting code that
+    already reads `resolved_at` keeps working without needing to know about workflow_status.
+    """
+    if not _is_engineer(actor):
+        raise Forbidden("Only IT Engineers may change ticket workflow status")
+    ticket = get_ticket_or_404(db, ticket_id)
+    if ticket.status in (CLOSED, CANCELLED):
+        raise DomainError(f"Cannot change workflow status of a ticket in terminal state {ticket.status}")
+
+    valid_states = wf.workflow_statuses_for(ticket.ticket_type)
+    if not valid_states:
+        raise DomainError(
+            f"SPEC §3 defines no workflow for ticket_type={ticket.ticket_type}; "
+            f"workflow_status can only be changed on INCIDENT or SERVICE_REQUEST tickets."
+        )
+    if target_workflow_status not in valid_states:
+        raise DomainError(
+            f"Invalid workflow_status for {ticket.ticket_type}. Allowed: {valid_states}")
+
+    current = ticket.workflow_status
+    if current is None:
+        # Defensive: shouldn't happen for a WORKFLOW_ENABLED ticket_type post-creation, but
+        # covers rows that predate this column (see models.py comment) — treat as "not yet
+        # started" and let it initialize into the workflow from PROGRESSING going forward,
+        # fail closed rather than guessing a transition.
+        raise DomainError(
+            "This ticket has no workflow_status yet; it predates SPEC §3 and cannot be "
+            "transitioned automatically. Contact a System Admin.")
+
+    event = wf.event_for_workflow_target(ticket.ticket_type, current, target_workflow_status)
+    if event is None:
+        raise DomainError(f"No workflow transition from {current} to {target_workflow_status} "
+                          f"for a {ticket.ticket_type} ticket")
+
+    new_state = wf.next_workflow_state(ticket.ticket_type, current, event)
+
+    # Pause-clock: stop the clock when leaving a pause state, start it when entering one.
+    was_paused = wf.is_pause_state(current)
+    will_be_paused = wf.is_pause_state(new_state)
+    if was_paused and not will_be_paused:
+        _end_sla_pause(ticket)
+    elif will_be_paused and not was_paused:
+        _start_sla_pause(ticket)
+    # (pause -> pause, e.g. PEND_USER -> PEND_3RDPARTY, isn't reachable via the transition
+    # graphs above — both require passing back through PROGRESSING — so no case for it here.)
+
+    ticket.workflow_status = new_state
+    if wf.is_terminal_workflow_state(new_state) and ticket.resolved_at is None:
+        # Mirror into the existing resolved_at column so reporting/SLA-status code that
+        # already reads it (see Ticket.sla_status, core/sla.py) reflects the workflow
+        # reaching RESOLVED/FULFILLED, without needing a §3-aware rewrite this session.
+        ticket.resolved_at = utcnow()
+
+    audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.WORKFLOW_STATUS_CHANGE,
+                 field="workflow_status", old_value=current, new_value=new_state)
+    db.commit(); db.refresh(ticket)
+
+    notif_event = "TICKET_RESOLVED" if wf.is_terminal_workflow_state(new_state) else "TICKET_UPDATED"
     notifier.dispatch(db, event=notif_event, ticket=ticket, actor_name=actor.display_name,
                       recipient_id=ticket.creator_id)
     return ticket
@@ -248,6 +362,8 @@ def cancel_ticket(db: Session, *, ticket_id: str, actor) -> Ticket:
         raise DomainError(f"No transition from {ticket.status} to CANCELLED")
     old = ticket.status
     ticket.status = next_state(ticket.status, event)
+    if ticket.sla_paused_at is not None:
+        _end_sla_pause(ticket)
 
     audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.STATUS_CHANGE,
                  field="status", old_value=old, new_value=ticket.status)

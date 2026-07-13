@@ -7,8 +7,10 @@ from . import service
 from .schemas import (
     TicketCreateIn, TicketAssignIn, StatusChangeIn, PriorityChangeIn, TicketTypeChangeIn,
     CommentCreateIn, TicketOut, TicketDetailOut, TicketCommentOut, TicketAttachmentOut,
+    WorkflowStatusChangeIn,
 )
 from .state_machine import allowed_target_states_for
+from . import workflow as wf
 from ...database import get_db
 from ...dependencies import get_current_user
 from ...config import get_settings
@@ -19,6 +21,12 @@ router = APIRouter()
 def _to_detail(t):
     out = TicketDetailOut.model_validate(t).model_dump()
     out["allowed_target_states"] = allowed_target_states_for(t.status)
+    # SPEC §3: only meaningful once the ticket has a workflow_status at all (INCIDENT/
+    # SERVICE_REQUEST tickets created after this session); NULL workflow_status -> no targets.
+    out["allowed_workflow_target_states"] = (
+        wf.allowed_workflow_target_states_for(t.ticket_type, t.workflow_status)
+        if t.workflow_status else []
+    )
     return out
 
 
@@ -62,6 +70,20 @@ def assign(request: Request, ticket_id: str, payload: TicketAssignIn, db: Sessio
 def change_status(request: Request, ticket_id: str, payload: StatusChangeIn, db: Session = Depends(get_db),
                   me=Depends(get_current_user)):
     return service.change_status(db, ticket_id=ticket_id, target_status=payload.target_status.upper(), actor=me)
+
+
+@router.post("/{ticket_id}/workflow-status", response_model=TicketOut)
+@limiter.limit("30/minute")
+def change_workflow_status(request: Request, ticket_id: str, payload: WorkflowStatusChangeIn,
+                           db: Session = Depends(get_db), me=Depends(get_current_user)):
+    """SPEC §3: move a ticket through its ticket-type-specific workflow (PROGRESSING/
+    ON_HOLD/PEND_3RDPARTY/PEND_USER/APPROVED/RESOLVED for Incidents; .../IN_APPROVAL/
+    FULFILLED for Service Requests). Distinct from POST /{ticket_id}/status, which drives
+    the pre-existing generic `status` field."""
+    return service.change_workflow_status(
+        db, ticket_id=ticket_id,
+        target_workflow_status=payload.target_workflow_status.upper().strip(),
+        actor=me)
 
 
 @router.post("/{ticket_id}/priority", response_model=TicketOut)
