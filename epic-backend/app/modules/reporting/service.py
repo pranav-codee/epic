@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..tickets.models import Ticket, PRIORITIES
+from ..catalogue.models import AssignmentGroup
 from ...core.sla import SLA_HOURS_BY_PRIORITY, AT_RISK_THRESHOLD, BUSINESS_HOURS_SLA_PRIORITY_LEVELS
 from ...core.time import utcnow
 
@@ -207,6 +208,61 @@ def sla_adherence_by_priority(db: Session):
     return result
 
 
+def inflow_resolved_open_by_group(db: Session, now: datetime | None = None):
+    """Counts of tickets created / resolved / currently open, grouped by
+    Ticket.assignment_group_id (joined to AssignmentGroup.name), for the current period.
+
+    "Current period" = current calendar month to date (1st of month 00:00 UTC through
+    `now`), matching the "for the current period" reporting cadence used elsewhere in this
+    module. `created` and `resolved` are period-scoped (only tickets created / resolved
+    within the window count); `open` is a point-in-time snapshot of tickets currently in
+    OPEN_STATES, independent of the period, since "currently open" isn't a period-bounded
+    concept. Tickets with no assignment_group_id are rolled up under "Unassigned" rather
+    than dropped, so the sheet's totals still reconcile against the ticket count.
+    """
+    now = now or utcnow()
+    period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    group_name = func.coalesce(AssignmentGroup.name, "Unassigned")
+
+    def _grouped(q):
+        return dict(
+            q.outerjoin(AssignmentGroup, Ticket.assignment_group_id == AssignmentGroup.id)
+            .group_by(group_name)
+            .all()
+        )
+
+    created = _grouped(
+        db.query(group_name, func.count(Ticket.id)).filter(
+            Ticket.created_at >= period_start, Ticket.created_at <= now
+        )
+    )
+    resolved_at = func.coalesce(Ticket.resolved_at, Ticket.closed_at)
+    resolved = _grouped(
+        db.query(group_name, func.count(Ticket.id)).filter(
+            resolved_at.isnot(None), resolved_at >= period_start, resolved_at <= now
+        )
+    )
+    open_now = _grouped(
+        db.query(group_name, func.count(Ticket.id)).filter(Ticket.status.in_(OPEN_STATES))
+    )
+
+    names = sorted(set(created) | set(resolved) | set(open_now))
+    return {
+        "period_start": period_start.isoformat(),
+        "period_end": now.isoformat(),
+        "by_group": [
+            {
+                "group": name,
+                "created": created.get(name, 0),
+                "resolved": resolved.get(name, 0),
+                "open": open_now.get(name, 0),
+            }
+            for name in names
+        ],
+    }
+
+
 def engineer_workload(db: Session, engineer_id: str):
     rows = (db.query(Ticket.status, func.count(Ticket.id))
               .filter(Ticket.assignee_id == engineer_id)
@@ -239,7 +295,10 @@ def _label(key: str) -> str:
 
 def build_excel_export(db: Session) -> bytes:
     """Builds an .xlsx workbook (Summary / By Status / By Priority / By Category /
-    By Type / SLA / Trend sheets) from the same overview() data the dashboard shows."""
+    By Type / SLA / Trend / Inflow-Resolved-Open by Group / SLA Met-Breached by Priority
+    sheets) from the same overview() data the dashboard shows, plus the group- and
+    priority-level aggregations from inflow_resolved_open_by_group() and
+    sla_adherence_by_priority()."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
@@ -342,6 +401,46 @@ def build_excel_export(db: Session) -> bytes:
     for point in data["trend"]:
         trend_ws.append([point["date"], point["count"]])
     autosize(trend_ws, [16, 16])
+
+    # --- Inflow-Resolved-Open by Group sheet ---
+    group_data = inflow_resolved_open_by_group(db)
+    group_ws = wb.create_sheet("Inflow-Resolved-Open by Group")
+    group_ws["A1"] = "Inflow / Resolved / Open by Assignment Group"
+    group_ws["A1"].font = title_font
+    group_ws["A2"] = (
+        f"Period: {group_data['period_start']} to {group_data['period_end']} (UTC)"
+    )
+    group_ws["A2"].font = Font(italic=True, color="57606A")
+    group_ws.append([])
+    group_ws.append(["Assignment group", "Created", "Resolved", "Currently open"])
+    style_header_row(group_ws, row_idx=4, ncols=4)
+    for row in group_data["by_group"]:
+        group_ws.append([row["group"], row["created"], row["resolved"], row["open"]])
+    autosize(group_ws, [30, 12, 12, 16])
+
+    # --- SLA Met-Breached by Priority sheet ---
+    sla_priority_data = sla_adherence_by_priority(db)
+    sla_priority_ws = wb.create_sheet("SLA Met-Breached by Priority")
+    sla_priority_ws.append(
+        ["Priority", "Clock", "Met", "Breached", "Total evaluated", "Achieved %", "Target %"]
+    )
+    style_header_row(sla_priority_ws, ncols=7)
+    for priority in PRIORITIES:
+        info = sla_priority_data.get(priority)
+        if not info:
+            continue
+        for clock in ("response", "resolution"):
+            c = info[clock]
+            sla_priority_ws.append([
+                _label(priority),
+                _label(clock),
+                c["achieved"],
+                c["breached"],
+                c["total"],
+                c["achieved_pct"] if c["achieved_pct"] is not None else "—",
+                c["target_pct"] if c["target_pct"] is not None else "—",
+            ])
+    autosize(sla_priority_ws, [14, 14, 10, 10, 16, 14, 12])
 
     buf = io.BytesIO()
     wb.save(buf)
