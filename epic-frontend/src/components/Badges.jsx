@@ -17,6 +17,16 @@ const SLA_LABELS = {
   BREACHED: "Breached",
   MET: "Met",
 };
-export const Sla = ({ value }) => (
-  <span className={`badge sla-${value}`}>{SLA_LABELS[value] || value}</span>
+export const Sla = ({ value, label }) => (
+  <span className={`badge sla-${value || "NONE"}`}>
+    {label ? `${label}: ` : ""}
+    {value ? SLA_LABELS[value] || value : "—"}
+  </span>
 );
+// Workflow-status badge — SPEC §3's ticket-type-specific workflow, distinct from the
+// legacy generic `status` field the Status badge above renders. NULL for ticket types
+// with no §3 workflow (PROBLEM/CHANGE_REQUEST), so this renders nothing in that case.
+export const WorkflowStatus = ({ value }) =>
+  value ? (
+    <span className={`badge w-${value}`}>{value.replace("_", " ")}</span>
+  ) : null;

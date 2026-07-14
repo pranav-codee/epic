@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../../api/client.js";
-import { Status, Priority, TicketType, Sla } from "../../components/Badges.jsx";
+import {
+  Status,
+  Priority,
+  TicketType,
+  Sla,
+  WorkflowStatus,
+} from "../../components/Badges.jsx";
 import { formatUtcDateTime } from "../../utils/time.js";
 
 const PRIORITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
@@ -106,7 +112,10 @@ export default function AdminTicket() {
       </h2>
       <div className="toolbar">
         <TicketType value={t.ticket_type} /> <Status value={t.status} />{" "}
-        <Priority value={t.priority} /> <Sla value={t.sla_status} />{" "}
+        <WorkflowStatus value={t.workflow_status} />{" "}
+        <Priority value={t.priority} />{" "}
+        <Sla value={t.response_sla_status} label="Response SLA" />{" "}
+        <Sla value={t.resolution_sla_status} label="Resolution SLA" />{" "}
         <span className="muted">{t.category}</span>
       </div>
 
@@ -225,13 +234,23 @@ export default function AdminTicket() {
           <dd>{formatUtcDateTime(t.created_at)}</dd>
           <dt>Updated</dt>
           <dd>{formatUtcDateTime(t.updated_at)}</dd>
-          <dt>SLA status</dt>
+          <dt>Response SLA</dt>
           <dd>
-            <Sla value={t.sla_status} />
-            {t.sla_due_at && (
+            <Sla value={t.response_sla_status} />
+            {t.response_due_at && (
               <span className="muted" style={{ marginLeft: 8 }}>
-                due {formatUtcDateTime(t.sla_due_at)} (
-                {slaTimeLabel(t.sla_due_at)})
+                due {formatUtcDateTime(t.response_due_at)} (
+                {slaTimeLabel(t.response_due_at)})
+              </span>
+            )}
+          </dd>
+          <dt>Resolution SLA</dt>
+          <dd>
+            <Sla value={t.resolution_sla_status} />
+            {t.resolution_due_at && (
+              <span className="muted" style={{ marginLeft: 8 }}>
+                due {formatUtcDateTime(t.resolution_due_at)} (
+                {slaTimeLabel(t.resolution_due_at)})
               </span>
             )}
           </dd>

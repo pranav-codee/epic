@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client.js";
-import { Status, Priority, TicketType } from "../../components/Badges.jsx";
+import {
+  Status,
+  Priority,
+  TicketType,
+  WorkflowStatus,
+} from "../../components/Badges.jsx";
 import { formatUtcDateTime } from "../../utils/time.js";
 
 export default function Queue() {
@@ -117,8 +122,10 @@ export default function Queue() {
             <th>Title</th>
             <th>Type</th>
             <th>Creator</th>
+            <th>Requestor</th>
             <th>Assignee</th>
             <th>Status</th>
+            <th>Workflow status</th>
             <th>Priority</th>
             <th>Category</th>
             <th>Created</th>
@@ -136,6 +143,7 @@ export default function Queue() {
                 <TicketType value={t.ticket_type} />
               </td>
               <td>{t.creator?.display_name || "—"}</td>
+              <td>{t.requestor?.display_name || "—"}</td>
               <td>
                 {t.assignee?.display_name || (
                   <span className="muted">Unassigned</span>
@@ -143,6 +151,13 @@ export default function Queue() {
               </td>
               <td>
                 <Status value={t.status} />
+              </td>
+              <td>
+                {t.workflow_status ? (
+                  <WorkflowStatus value={t.workflow_status} />
+                ) : (
+                  <span className="muted">—</span>
+                )}
               </td>
               <td>
                 <Priority value={t.priority} />
