@@ -36,6 +36,7 @@ const CATEGORIES = [
   "OTHER",
 ];
 const PRIORITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+const CHANNELS = ["SELF_SERVICE", "EMAIL", "PHONE", "MONITORING_TOOL"];
 
 export default function NewTicket() {
   const nav = useNavigate();
@@ -45,6 +46,7 @@ export default function NewTicket() {
     ticket_type: "INCIDENT",
     category: "HARDWARE",
     priority: "MEDIUM",
+    channel: "SELF_SERVICE",
   });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -124,6 +126,17 @@ export default function NewTicket() {
             >
               {PRIORITIES.map((p) => (
                 <option key={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Channel</label>
+            <select
+              value={form.channel}
+              onChange={(e) => setForm({ ...form, channel: e.target.value })}
+            >
+              {CHANNELS.map((c) => (
+                <option key={c}>{c}</option>
               ))}
             </select>
           </div>
