@@ -10,7 +10,8 @@ export default function MyTickets() {
   const [status, setStatus] = useState("");
 
   async function load() {
-    const rows = await api.get("/tickets");
+    const res = await api.get("/tickets");
+    const rows = res.items ?? res;
     const filtered = (rows || []).filter((ticket) => {
       if (status && ticket.status !== status) return false;
       if (!q) return true;

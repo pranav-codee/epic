@@ -240,55 +240,57 @@ function clockCellClass(cell) {
 function SlaComplianceMatrix({ data }) {
   if (!data) return <p className="muted">Loading…</p>;
   return (
-    <table>
-      <thead>
-        <tr>
-          <th rowSpan={2}>Priority</th>
-          <th colSpan={3}>Response</th>
-          <th colSpan={3}>Resolution</th>
-        </tr>
-        <tr>
-          <th>Achieved</th>
-          <th>Breached</th>
-          <th>Achieved %</th>
-          <th>Achieved</th>
-          <th>Breached</th>
-          <th>Achieved %</th>
-        </tr>
-      </thead>
-      <tbody>
-        {SLA_PRIORITIES.map((p) => {
-          const row = data[p];
-          const response = row?.response;
-          const resolution = row?.resolution;
-          return (
-            <tr key={p}>
-              <td>
-                <span
-                  className="dot"
-                  style={{ background: PRIORITY_COLORS[p], marginRight: 8 }}
-                />
-                {p}
-              </td>
-              <td>{response?.achieved ?? 0}</td>
-              <td>{response?.breached ?? 0}</td>
-              <td className={clockCellClass(response)}>
-                {response?.achieved_pct != null
-                  ? `${response.achieved_pct}% (target ${response.target_pct}%)`
-                  : "—"}
-              </td>
-              <td>{resolution?.achieved ?? 0}</td>
-              <td>{resolution?.breached ?? 0}</td>
-              <td className={clockCellClass(resolution)}>
-                {resolution?.achieved_pct != null
-                  ? `${resolution.achieved_pct}% (target ${resolution.target_pct}%)`
-                  : "—"}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th rowSpan={2}>Priority</th>
+            <th colSpan={3}>Response</th>
+            <th colSpan={3}>Resolution</th>
+          </tr>
+          <tr>
+            <th>Achieved</th>
+            <th>Breached</th>
+            <th>Achieved %</th>
+            <th>Achieved</th>
+            <th>Breached</th>
+            <th>Achieved %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {SLA_PRIORITIES.map((p) => {
+            const row = data[p];
+            const response = row?.response;
+            const resolution = row?.resolution;
+            return (
+              <tr key={p}>
+                <td>
+                  <span
+                    className="dot"
+                    style={{ background: PRIORITY_COLORS[p], marginRight: 8 }}
+                  />
+                  {p}
+                </td>
+                <td>{response?.achieved ?? 0}</td>
+                <td>{response?.breached ?? 0}</td>
+                <td className={clockCellClass(response)}>
+                  {response?.achieved_pct != null
+                    ? `${response.achieved_pct}% (target ${response.target_pct}%)`
+                    : "—"}
+                </td>
+                <td>{resolution?.achieved ?? 0}</td>
+                <td>{resolution?.breached ?? 0}</td>
+                <td className={clockCellClass(resolution)}>
+                  {resolution?.achieved_pct != null
+                    ? `${resolution.achieved_pct}% (target ${resolution.target_pct}%)`
+                    : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -722,7 +724,7 @@ export default function Dashboard() {
           Achieved % vs target % by Priority × Response/Resolution, with a
           drill-down list of breached tickets.
         </p>
-        <div className="charts-grid">
+        <div className="charts-grid sla-grid">
           <SlaComplianceSection
             title="Incidents"
             data={incidentSlaCompliance}

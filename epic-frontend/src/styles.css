@@ -359,6 +359,18 @@ tr:hover td {
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 16px;
 }
+/* SLA compliance tables have 7 columns and need real width — stack them full-width
+   instead of forcing them into the same 360px-min grid cells as the smaller charts. */
+.charts-grid.sla-grid {
+  grid-template-columns: 1fr;
+}
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+.table-scroll table {
+  min-width: 640px;
+}
 .chart-card {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -405,8 +417,16 @@ tr:hover td {
   white-space: nowrap;
   color: var(--text);
 }
-.pie-legend .pl-value {
-  font-weight: 600;
+.catalogue-row {
+  display: flex;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--bg-soft);
+}
+.catalogue-row .form-row {
+  margin-bottom: 0;
 }
 .pie-legend .pl-pct {
   color: var(--text-muted);

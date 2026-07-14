@@ -9,7 +9,7 @@ export default function Home() {
   useEffect(() => {
     api
       .get("/tickets")
-      .then(setTickets)
+      .then((res) => setTickets(res.items ?? res))
       .catch(() => {});
   }, []);
   const open = tickets.filter(

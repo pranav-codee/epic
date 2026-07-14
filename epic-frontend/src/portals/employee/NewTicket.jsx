@@ -140,10 +140,10 @@ export default function NewTicket() {
             required
           />
         </div>
-        <div className="form-row">
+        <div className="form-row" style={{ marginBottom: 20 }}>
           <label>What is this about?</label>
-          <div style={{ display: "flex", gap: 12 }}>
-            <div style={{ flex: 1 }}>
+          <div className="catalogue-row">
+            <div className="form-row" style={{ flex: 1 }}>
               <label className="muted" style={{ fontSize: "0.85em" }}>
                 Tower
               </label>
@@ -159,7 +159,7 @@ export default function NewTicket() {
                 ))}
               </select>
             </div>
-            <div style={{ flex: 1 }}>
+            <div className="form-row" style={{ flex: 1 }}>
               <label className="muted" style={{ fontSize: "0.85em" }}>
                 Service
               </label>
@@ -180,7 +180,7 @@ export default function NewTicket() {
                 ))}
               </select>
             </div>
-            <div style={{ flex: 1 }}>
+            <div className="form-row" style={{ flex: 1 }}>
               <label className="muted" style={{ fontSize: "0.85em" }}>
                 Item
               </label>
