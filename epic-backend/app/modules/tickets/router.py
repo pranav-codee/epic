@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response, Request
 from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from ...core.rate_limit import limiter
 
@@ -47,9 +48,16 @@ def create_ticket(request: Request, payload: TicketCreateIn, db: Session = Depen
     return t
 
 
-@router.get("", response_model=list[TicketOut])
-def list_tickets(db: Session = Depends(get_db), me=Depends(get_current_user)):
-    return service.list_for_user(db, me)
+@router.get("")
+def list_tickets(limit: int = 200, offset: int = 0,
+                 db: Session = Depends(get_db), me=Depends(get_current_user)):
+    total, results, limit, offset = service.list_for_user(db, me, limit=limit, offset=offset)
+    return {
+        "items": [TicketOut.model_validate(t) for t in results],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/{ticket_id}", response_model=TicketDetailOut)
@@ -137,8 +145,13 @@ async def upload_attachment(request: Request, ticket_id: str, file: UploadFile =
         chunks.append(chunk)
     data = b"".join(chunks)
 
-    att = service.add_attachment(db, ticket_id=ticket_id, file_name=file.filename,
-                                 content_type=file.content_type, data=data, actor=me)
+    # add_attachment does synchronous DB queries + disk I/O; running it directly here
+    # would block the event loop for every other in-flight async request. Offload it
+    # to the threadpool the same way FastAPI already does for plain `def` routes.
+    att = await run_in_threadpool(
+        service.add_attachment, db, ticket_id=ticket_id, file_name=file.filename,
+        content_type=file.content_type, data=data, actor=me,
+    )
     return att
 
 

@@ -30,6 +30,7 @@ from ...core.sla import (
 )
 from ...core.time import utcnow
 
+MAX_LIST_PAGE_SIZE = 200
 
 # ---------- Helpers ----------
 
@@ -664,11 +665,16 @@ def add_attachment(db: Session, *, ticket_id: str, file_name: str, content_type:
 
 # ---------- Reads ----------
 
-def list_for_user(db: Session, user, *, limit: int = 200):
+
+def list_for_user(db: Session, user, *, limit: int = 200, offset: int = 0):
+    limit = max(1, min(limit, MAX_LIST_PAGE_SIZE))
+    offset = max(0, offset)
     q = db.query(Ticket).options(joinedload(Ticket.creator), joinedload(Ticket.assignee))
     if not _is_engineer(user):
         q = q.filter(Ticket.creator_id == user.id)
-    return q.order_by(Ticket.created_at.desc()).limit(limit).all()
+    total = q.with_entities(func.count(Ticket.id)).scalar() or 0
+    results = q.order_by(Ticket.created_at.desc()).offset(offset).limit(limit).all()
+    return total, results, limit, offset
 
 
 def fetch_detail(db: Session, ticket_id: str, user):

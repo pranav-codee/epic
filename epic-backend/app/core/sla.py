@@ -64,6 +64,12 @@ from zoneinfo import ZoneInfo
 
 from .time import utcnow
 
+# Safety valve: neither function should ever legitimately need to walk more than a
+# few years of calendar days. If it does, something upstream handed it a bad
+# datetime (e.g. a corrupted due date, a caller passing years instead of minutes) —
+# fail fast with a clear error instead of iterating silently for an unbounded time.
+MAX_BUSINESS_HOURS_SPAN_DAYS = 3653  # ~10 years
+
 # Resolution-time targets, in hours, per priority. Tune freely — every consumer
 # (ticket service + dashboard reporting) reads from this single source of truth.
 SLA_HOURS_BY_PRIORITY = {
@@ -229,6 +235,12 @@ def business_hours_elapsed(start: datetime, end: datetime, timezone_name: str) -
 
     total = timedelta(0)
     d = start_local.date()
+    span_days = (end_local.date() - d).days
+    if span_days > MAX_BUSINESS_HOURS_SPAN_DAYS:
+        raise ValueError(
+            f"business_hours_elapsed span of {span_days} days exceeds the "
+            f"{MAX_BUSINESS_HOURS_SPAN_DAYS}-day sanity limit — check start/end inputs"
+        )
     while d <= end_local.date():
         window = _business_window(d, tz)
         if window is not None:
@@ -262,6 +274,7 @@ def add_business_minutes(start: datetime, minutes: float, timezone_name: str) ->
     point = _next_business_moment(point, tz)
     remaining = timedelta(minutes=minutes)
 
+    days_walked = 0
     while True:
         d = point.date()
         _, w_end = _business_window(d, tz)  # point is always inside a valid window here
@@ -270,6 +283,12 @@ def add_business_minutes(start: datetime, minutes: float, timezone_name: str) ->
             result = point + remaining
             return result.astimezone(_dt_timezone.utc).replace(tzinfo=None)
         remaining -= capacity
+        days_walked += 1
+        if days_walked > MAX_BUSINESS_HOURS_SPAN_DAYS:
+            raise ValueError(
+                f"add_business_minutes exceeded {MAX_BUSINESS_HOURS_SPAN_DAYS} business "
+                f"days walking toward {minutes} minutes — check the `minutes` argument"
+            )
         next_day = d + timedelta(days=1)
         point = _next_business_moment(
             datetime(next_day.year, next_day.month, next_day.day, 0, 0, tzinfo=tz), tz
