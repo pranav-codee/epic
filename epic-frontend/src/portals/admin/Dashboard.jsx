@@ -61,6 +61,19 @@ const SERVICE_REQUEST_WORKFLOW_STATUSES = [
   "FULFILLED",
 ];
 
+// Mirrors reporting/service.py's AGEING_BUCKETS — fixed column order (days old) for the
+// "Ageing / Backlog" tables below, so the column set stays stable regardless of which
+// buckets currently have tickets in them. Keys match the bucket keys the API returns in
+// each row's `counts_by_bucket`; labels are the human-readable column headers.
+const AGEING_BUCKETS = [
+  { key: "<=1", label: "≤1 day" },
+  { key: ">1", label: ">1 day" },
+  { key: ">3", label: ">3 days" },
+  { key: ">7", label: ">7 days" },
+  { key: ">15", label: ">15 days" },
+  { key: ">30", label: ">30 days" },
+];
+
 function colorFor(map, key, index) {
   return map[key] || FALLBACK_PALETTE[index % FALLBACK_PALETTE.length];
 }
@@ -181,6 +194,38 @@ function CrosstabTable({ title, columns, rows }) {
   );
 }
 
+function AgeingTable({ title, rows }) {
+  return (
+    <div className="chart-card">
+      <h4 style={{ marginTop: 0 }}>{title}</h4>
+      {!rows || rows.length === 0 ? (
+        <p className="muted">No open tickets</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Assignment Group</th>
+              {AGEING_BUCKETS.map((b) => (
+                <th key={b.key}>{b.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.assignment_group_name}>
+                <td>{r.assignment_group_name}</td>
+                {AGEING_BUCKETS.map((b) => (
+                  <td key={b.key}>{r.counts_by_bucket?.[b.key] ?? 0}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function slaTone(rate) {
   if (rate == null) return "";
   if (rate >= 90) return "ok";
@@ -195,6 +240,9 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [incidentCrosstab, setIncidentCrosstab] = useState(null);
   const [serviceRequestCrosstab, setServiceRequestCrosstab] = useState(null);
+  const [monitoringAgeing, setMonitoringAgeing] = useState(null);
+  const [humanIncidentAgeing, setHumanIncidentAgeing] = useState(null);
+  const [serviceRequestAgeing, setServiceRequestAgeing] = useState(null);
 
   const load = useCallback(() => {
     api.get("/dashboard/overview").then(setData);
@@ -210,6 +258,18 @@ export default function Dashboard() {
       .get("/dashboard/group-status-crosstab?ticket_type=SERVICE_REQUEST")
       .then(setServiceRequestCrosstab)
       .catch(() => setServiceRequestCrosstab([]));
+    api
+      .get("/dashboard/ageing?ticket_type=INCIDENT&channel=monitoring")
+      .then(setMonitoringAgeing)
+      .catch(() => setMonitoringAgeing([]));
+    api
+      .get("/dashboard/ageing?ticket_type=INCIDENT&channel=human")
+      .then(setHumanIncidentAgeing)
+      .catch(() => setHumanIncidentAgeing([]));
+    api
+      .get("/dashboard/ageing?ticket_type=SERVICE_REQUEST&channel=all")
+      .then(setServiceRequestAgeing)
+      .catch(() => setServiceRequestAgeing([]));
   }, []);
 
   useEffect(() => {
@@ -437,6 +497,19 @@ export default function Dashboard() {
             columns={SERVICE_REQUEST_WORKFLOW_STATUSES}
             rows={serviceRequestCrosstab}
           />
+        </div>
+      </div>
+
+      {/* --- Ageing / Backlog (production View C) --- */}
+      <div className="card" style={{ marginTop: 24 }}>
+        <h3>Ageing / Backlog</h3>
+        <p className="muted" style={{ marginTop: -4 }}>
+          Open tickets by Assignment Group, bucketed by age.
+        </p>
+        <div className="charts-grid">
+          <AgeingTable title="PRTG Alerts" rows={monitoringAgeing} />
+          <AgeingTable title="Incidents" rows={humanIncidentAgeing} />
+          <AgeingTable title="Service Requests" rows={serviceRequestAgeing} />
         </div>
       </div>
     </>

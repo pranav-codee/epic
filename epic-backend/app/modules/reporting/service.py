@@ -309,6 +309,80 @@ def group_by_status_crosstab(db: Session, ticket_type: str):
     ]
 
 
+# Production View C: fixed ageing-bucket boundaries, in days-old, applied to currently-open
+# tickets. Buckets are cumulative-exclusive (each ticket lands in exactly one) with the
+# upper bucket open-ended: <=1, (1,3], (3,7], (7,15], (15,30], >30. Exposed as a fixed,
+# ordered column set (like group_by_status_crosstab's workflow_status columns) so the
+# frontend always renders the same six columns regardless of which buckets currently have
+# tickets in them.
+AGEING_BUCKETS = ["<=1", ">1", ">3", ">7", ">15", ">30"]
+
+
+def _ageing_bucket_for(age_days: float) -> str:
+    if age_days <= 1:
+        return "<=1"
+    if age_days <= 3:
+        return ">1"
+    if age_days <= 7:
+        return ">3"
+    if age_days <= 15:
+        return ">7"
+    if age_days <= 30:
+        return ">15"
+    return ">30"
+
+
+def ageing_buckets(db: Session, ticket_type: str, channel_filter: str = "all", now: datetime | None = None):
+    """Production View C: currently-open tickets bucketed by (now - created_at) age, in
+    fixed <=1/>1/>3/>7/>15/>30-day buckets (AGEING_BUCKETS above), cross-tabbed by
+    Assignment Group. Computed separately per ticket_type (INCIDENT vs SERVICE_REQUEST,
+    same restriction as group_by_status_crosstab's ticket types) and, within ticket_type,
+    separately sliced by channel:
+
+    - channel_filter="monitoring": only channel == "MONITORING_TOOL" tickets (monitoring-tool
+      alerts, e.g. PRTG).
+    - channel_filter="human": only channel != "MONITORING_TOOL" tickets (end-user-raised
+      tickets — email/phone/self-service).
+    - channel_filter="all": no channel filter (used for Service Requests, which don't
+      originate from the monitoring-tool channel).
+
+    "Open" uses the same OPEN_STATES definition as the rest of this module. Every bucket
+    column is always present in each row's `counts_by_bucket` (zero-filled), and every
+    assignment group with at least one open ticket in scope gets a row — tickets with no
+    assignment_group_id roll up under "Unassigned" rather than being dropped, matching
+    inflow_resolved_open_by_group()'s convention.
+    """
+    if ticket_type not in wf.WORKFLOW_ENABLED_TICKET_TYPES:
+        raise ValueError(f"Invalid ticket_type. Allowed: {sorted(wf.WORKFLOW_ENABLED_TICKET_TYPES)}")
+    if channel_filter not in ("monitoring", "human", "all"):
+        raise ValueError("Invalid channel. Allowed: monitoring, human, all")
+
+    now = now or utcnow()
+    group_name = func.coalesce(AssignmentGroup.name, "Unassigned")
+
+    q = (
+        db.query(group_name, Ticket.created_at)
+        .outerjoin(AssignmentGroup, Ticket.assignment_group_id == AssignmentGroup.id)
+        .filter(Ticket.ticket_type == ticket_type, Ticket.status.in_(OPEN_STATES))
+    )
+    if channel_filter == "monitoring":
+        q = q.filter(Ticket.channel == "MONITORING_TOOL")
+    elif channel_filter == "human":
+        q = q.filter(Ticket.channel != "MONITORING_TOOL")
+
+    by_group: dict[str, dict[str, int]] = {}
+    for name, created_at in q.all():
+        age_days = (now - created_at).total_seconds() / 86400
+        bucket = _ageing_bucket_for(age_days)
+        row = by_group.setdefault(name, {b: 0 for b in AGEING_BUCKETS})
+        row[bucket] += 1
+
+    return [
+        {"assignment_group_name": name, "counts_by_bucket": by_group[name]}
+        for name in sorted(by_group)
+    ]
+
+
 def engineer_workload(db: Session, engineer_id: str):
     rows = (db.query(Ticket.status, func.count(Ticket.id))
               .filter(Ticket.assignee_id == engineer_id)

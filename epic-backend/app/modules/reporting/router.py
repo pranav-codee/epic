@@ -43,6 +43,20 @@ def group_status_crosstab(request: Request, ticket_type: str = "INCIDENT", db: S
         raise HTTPException(400, str(e))
 
 
+@router.get("/ageing")
+@limiter.limit("30/minute")
+def ageing(request: Request, ticket_type: str = "INCIDENT", channel: str = "all",
+           db: Session = Depends(get_db), _=Depends(require_role(*_DASHBOARD_ROLES))):
+    """Production View C: open-ticket ageing buckets (<=1/>1/>3/>7/>15/>30 days) cross-tabbed
+    by Assignment Group, computed separately for INCIDENT vs SERVICE_REQUEST and, within
+    ticket_type, sliced by channel ("monitoring" = MONITORING_TOOL alerts, "human" =
+    everything else, "all" = no channel filter). Same role gate as /overview."""
+    try:
+        return service.ageing_buckets(db, ticket_type.upper().strip(), channel.lower().strip())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/engineer/me")
 @limiter.limit("30/minute")
 def my_workload(request: Request, db: Session = Depends(get_db),
