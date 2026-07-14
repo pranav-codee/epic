@@ -24,19 +24,15 @@ const TICKET_TYPES = [
     hint: "A formal request for a planned, systemic update to IT infrastructure (e.g. server migration, system upgrade, scheduled patch).",
   },
 ];
-const CATEGORIES = [
-  "HARDWARE",
-  "SOFTWARE",
-  "NETWORK",
-  "VPN",
-  "EMAIL",
-  "SECURITY",
-  "ACCESS",
-  "APPLICATION",
-  "OTHER",
-];
 const PRIORITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const CHANNELS = ["SELF_SERVICE", "EMAIL", "PHONE", "MONITORING_TOOL"];
+// The backend's flat `category` field (tickets/models.py CATEGORIES) is still required
+// server-side and predates the 3-level catalogue hierarchy below. There's no clean 1:1
+// mapping from a Tower (e.g. "Data Center Services") to a flat category (e.g.
+// "HARDWARE"), so once the cascading catalogue select is used we submit this generic
+// bucket value alongside the richer category_id/subcategory_id/item_id fields, rather
+// than asking the user to also pick a flat category that no longer drives the UI.
+const LEGACY_CATEGORY_FALLBACK = "OTHER";
 
 export default function NewTicket() {
   const nav = useNavigate();
@@ -44,19 +40,24 @@ export default function NewTicket() {
     title: "",
     description: "",
     ticket_type: "INCIDENT",
-    category: "HARDWARE",
+    category: LEGACY_CATEGORY_FALLBACK,
     priority: "MEDIUM",
     channel: "SELF_SERVICE",
   });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [assignmentGroups, setAssignmentGroups] = useState([]);
+  const [catalogueTree, setCatalogueTree] = useState([]);
 
   useEffect(() => {
     api
       .get("/catalogue/assignment-groups")
       .then((groups) => setAssignmentGroups(groups))
       .catch(() => setAssignmentGroups([]));
+    api
+      .get("/catalogue/tree")
+      .then((tree) => setCatalogueTree(tree))
+      .catch(() => setCatalogueTree([]));
   }, []);
 
   async function submit(e) {
@@ -74,6 +75,31 @@ export default function NewTicket() {
   }
 
   const selectedType = TICKET_TYPES.find((t) => t.value === form.ticket_type);
+  const selectedCategory = catalogueTree.find((c) => c.id === form.category_id);
+  const selectedSubcategory = selectedCategory?.subcategories.find(
+    (s) => s.id === form.subcategory_id,
+  );
+
+  function onTowerChange(categoryId) {
+    setForm({
+      ...form,
+      category_id: categoryId || undefined,
+      subcategory_id: undefined,
+      item_id: undefined,
+    });
+  }
+
+  function onServiceChange(subcategoryId) {
+    setForm({
+      ...form,
+      subcategory_id: subcategoryId || undefined,
+      item_id: undefined,
+    });
+  }
+
+  function onItemChange(itemId) {
+    setForm({ ...form, item_id: itemId || undefined });
+  }
 
   return (
     <>
@@ -114,18 +140,70 @@ export default function NewTicket() {
             required
           />
         </div>
-        <div className="form-row" style={{ display: "flex", gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <label>Category</label>
-            <select
-              value={form.category}
-              onChange={(e) => setForm({ ...form, category: e.target.value })}
-            >
-              {CATEGORIES.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </select>
+        <div className="form-row">
+          <label>What is this about?</label>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="muted" style={{ fontSize: "0.85em" }}>
+                Tower
+              </label>
+              <select
+                value={form.category_id || ""}
+                onChange={(e) => onTowerChange(e.target.value)}
+              >
+                <option value="">Select a tower…</option>
+                {catalogueTree.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="muted" style={{ fontSize: "0.85em" }}>
+                Service
+              </label>
+              <select
+                value={form.subcategory_id || ""}
+                onChange={(e) => onServiceChange(e.target.value)}
+                disabled={!selectedCategory}
+              >
+                <option value="">
+                  {selectedCategory
+                    ? "Select a service…"
+                    : "Select a tower first"}
+                </option>
+                {selectedCategory?.subcategories.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="muted" style={{ fontSize: "0.85em" }}>
+                Item
+              </label>
+              <select
+                value={form.item_id || ""}
+                onChange={(e) => onItemChange(e.target.value)}
+                disabled={!selectedSubcategory}
+              >
+                <option value="">
+                  {selectedSubcategory
+                    ? "Select an item…"
+                    : "Select a service first"}
+                </option>
+                {selectedSubcategory?.items.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
+        </div>
+        <div className="form-row" style={{ display: "flex", gap: 12 }}>
           <div style={{ flex: 1 }}>
             <label>Priority</label>
             <select

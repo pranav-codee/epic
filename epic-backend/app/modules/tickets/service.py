@@ -221,6 +221,8 @@ def _record_resolution(db: Session, *, ticket: Ticket, actor, breached_reason: s
 def create_ticket(db: Session, *, creator, title: str, description: str, ticket_type: str, category: str,
                   priority: str, requestor_id: str | None = None, location_id: str | None = None,
                   channel: str = "SELF_SERVICE", assignment_group_id: str | None = None,
+                  category_id: str | None = None, subcategory_id: str | None = None,
+                  item_id: str | None = None,
                   device_name: str | None = None, device_ip_address: str | None = None,
                   device_site_name: str | None = None) -> Ticket:
     if ticket_type not in TICKET_TYPES:
@@ -268,6 +270,9 @@ def create_ticket(db: Session, *, creator, title: str, description: str, ticket_
         location_id=effective_location_id,
         channel=channel,
         assignment_group_id=assignment_group_id,
+        category_id=category_id,
+        subcategory_id=subcategory_id,
+        item_id=item_id,
         device_name=device_name if channel == "MONITORING_TOOL" else None,
         device_ip_address=device_ip_address if channel == "MONITORING_TOOL" else None,
         device_site_name=device_site_name if channel == "MONITORING_TOOL" else None,

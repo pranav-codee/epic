@@ -43,6 +43,14 @@ export default function AdminTicket() {
   const [assigneeId, setAssigneeId] = useState("");
   const [comment, setComment] = useState("");
   const [error, setError] = useState(null);
+  const [catalogueTree, setCatalogueTree] = useState([]);
+
+  useEffect(() => {
+    api
+      .get("/catalogue/tree")
+      .then((tree) => setCatalogueTree(tree))
+      .catch(() => setCatalogueTree([]));
+  }, []);
 
   async function load() {
     setT(await api.get(`/tickets/${id}`));
@@ -105,6 +113,26 @@ export default function AdminTicket() {
 
   if (!t) return <p>Loading…</p>;
   const isTerminal = (t.allowed_target_states || []).length === 0;
+
+  // Resolve t.category_id/subcategory_id/item_id (raw FKs on TicketOut) against the
+  // fetched catalogue tree to build a readable "Tower / Service / Item" breadcrumb.
+  const classificationCategory = catalogueTree.find(
+    (c) => c.id === t.category_id,
+  );
+  const classificationSubcategory = classificationCategory?.subcategories.find(
+    (s) => s.id === t.subcategory_id,
+  );
+  const classificationItem = classificationSubcategory?.items.find(
+    (i) => i.id === t.item_id,
+  );
+  const classificationPath = [
+    classificationCategory?.name,
+    classificationSubcategory?.name,
+    classificationItem?.name,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+
   return (
     <>
       <h2>
@@ -228,6 +256,12 @@ export default function AdminTicket() {
             <>
               <dt>Location</dt>
               <dd>{t.location_id}</dd>
+            </>
+          )}
+          {classificationPath && (
+            <>
+              <dt>Classification</dt>
+              <dd>{classificationPath}</dd>
             </>
           )}
           <dt>Created</dt>

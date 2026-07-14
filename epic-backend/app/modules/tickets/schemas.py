@@ -18,6 +18,12 @@ class TicketCreateIn(BaseModel):
     device_ip_address: Optional[str] = None
     device_site_name: Optional[str] = None
     assignment_group_id: Optional[str] = None
+    # New 3-level catalogue classification (Tower -> Service -> Item). All optional and
+    # additive alongside the legacy flat `category` field above, which remains required
+    # for backward compatibility until the flat CATEGORIES enum is retired.
+    category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None
+    item_id: Optional[str] = None
 
     def normalized(self):
         self.ticket_type = self.ticket_type.upper().strip()
@@ -126,6 +132,9 @@ class TicketOut(BaseModel):
     assignee: Optional[UserBrief] = None
     location_id: Optional[str] = None
     assignment_group_id: Optional[str] = None
+    category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None
+    item_id: Optional[str] = None
     channel: str = "SELF_SERVICE"
     device_name: Optional[str] = None
     device_ip_address: Optional[str] = None
