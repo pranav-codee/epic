@@ -17,6 +17,7 @@ class TicketCreateIn(BaseModel):
     device_name: Optional[str] = None
     device_ip_address: Optional[str] = None
     device_site_name: Optional[str] = None
+    assignment_group_id: Optional[str] = None
 
     def normalized(self):
         self.ticket_type = self.ticket_type.upper().strip()

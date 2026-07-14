@@ -17,19 +17,46 @@ export default function Queue() {
     ticket_type: "",
     category: "",
     priority: "",
+    assignment_group_id: "",
     q: "",
   });
   const [total, setTotal] = useState(0);
+  const [assignmentGroups, setAssignmentGroups] = useState([]);
 
-  async function load() {
+  // id -> name lookup so the queue table can show a readable group name even
+  // though search results only carry assignment_group_id.
+  const groupNameById = Object.fromEntries(
+    assignmentGroups.map((g) => [g.id, g.name]),
+  );
+
+  async function load(overrides) {
+    const activeFilters = overrides || filters;
     const params = new URLSearchParams();
-    Object.entries(filters).forEach(([k, v]) => v && params.set(k, v));
+    Object.entries(activeFilters).forEach(([k, v]) => v && params.set(k, v));
     const r = await api.get("/search/tickets?" + params.toString());
     setTickets(r.results);
     setTotal(r.total);
   }
+
+  async function loadMyGroupsTickets() {
+    const mine = await api.get("/catalogue/assignment-groups/mine");
+    const ids = mine.map((g) => g.id).join(",");
+    const nextFilters = { ...filters, assignment_group_id: ids };
+    setFilters(nextFilters);
+    if (ids) {
+      await load(nextFilters);
+    } else {
+      setTickets([]);
+      setTotal(0);
+    }
+  }
+
   useEffect(() => {
     load();
+    api
+      .get("/catalogue/assignment-groups")
+      .then((groups) => setAssignmentGroups(groups))
+      .catch(() => setAssignmentGroups([]));
   }, []);
 
   return (
@@ -110,8 +137,24 @@ export default function Queue() {
             <option key={p}>{p}</option>
           ))}
         </select>
-        <button className="btn" onClick={load}>
+        <select
+          value={filters.assignment_group_id}
+          onChange={(e) =>
+            setFilters({ ...filters, assignment_group_id: e.target.value })
+          }
+        >
+          <option value="">All assignment groups</option>
+          {assignmentGroups.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
+          ))}
+        </select>
+        <button className="btn" onClick={() => load()}>
           Apply
+        </button>
+        <button className="btn" onClick={loadMyGroupsTickets}>
+          My Group's Tickets
         </button>
       </div>
 
@@ -128,6 +171,7 @@ export default function Queue() {
             <th>Workflow status</th>
             <th>Priority</th>
             <th>Category</th>
+            <th>Assignment Group</th>
             <th>Created</th>
             <th>Last updated</th>
           </tr>
@@ -163,6 +207,13 @@ export default function Queue() {
                 <Priority value={t.priority} />
               </td>
               <td>{t.category}</td>
+              <td>
+                {t.assignment_group_id ? (
+                  groupNameById[t.assignment_group_id] || t.assignment_group_id
+                ) : (
+                  <span className="muted">—</span>
+                )}
+              </td>
               <td className="muted">{formatUtcDateTime(t.created_at)}</td>
               <td className="muted">{formatUtcDateTime(t.updated_at)}</td>
             </tr>

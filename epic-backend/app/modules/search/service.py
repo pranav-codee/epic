@@ -24,6 +24,7 @@ def search(db, *, me,
            category: str | None = None,
            priority: str | None = None,
            employee_id: str | None = None,
+           assignment_group_id: str | None = None,
            q: str | None = None,
            limit: int = 100,
            offset: int = 0):
@@ -47,6 +48,15 @@ def search(db, *, me,
         query = query.filter(Ticket.priority == priority.upper())
     if employee_id and is_engineer:
         query = query.filter(Ticket.creator_id == employee_id)
+    if assignment_group_id:
+        # Supports a single id ("grp-1") or a comma-separated list ("grp-1,grp-2") so the
+        # frontend's "My Group's Tickets" quick-filter can pass every group the caller
+        # belongs to in one request.
+        group_ids = [g.strip() for g in assignment_group_id.split(",") if g.strip()]
+        if len(group_ids) == 1:
+            query = query.filter(Ticket.assignment_group_id == group_ids[0])
+        elif group_ids:
+            query = query.filter(Ticket.assignment_group_id.in_(group_ids))
     if q:
         like = f"%{q}%"
         query = query.filter(or_(Ticket.title.like(like), Ticket.description.like(like)))

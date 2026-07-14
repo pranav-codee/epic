@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api/client.js";
 
@@ -50,6 +50,14 @@ export default function NewTicket() {
   });
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [assignmentGroups, setAssignmentGroups] = useState([]);
+
+  useEffect(() => {
+    api
+      .get("/catalogue/assignment-groups")
+      .then((groups) => setAssignmentGroups(groups))
+      .catch(() => setAssignmentGroups([]));
+  }, []);
 
   async function submit(e) {
     e.preventDefault();
@@ -140,6 +148,25 @@ export default function NewTicket() {
               ))}
             </select>
           </div>
+        </div>
+        <div className="form-row">
+          <label>Assignment group (optional)</label>
+          <select
+            value={form.assignment_group_id || ""}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                assignment_group_id: e.target.value || undefined,
+              })
+            }
+          >
+            <option value="">No group / auto-assign later</option>
+            {assignmentGroups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
         </div>
         {error && <div className="error">{error}</div>}
         <button className="btn" disabled={busy}>

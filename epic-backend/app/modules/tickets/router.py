@@ -43,6 +43,7 @@ def create_ticket(request: Request, payload: TicketCreateIn, db: Session = Depen
                               ticket_type=payload.ticket_type, category=payload.category, priority=payload.priority,
                               requestor_id=payload.requestor_id, location_id=payload.location_id,
                               channel=payload.channel or "SELF_SERVICE",
+                              assignment_group_id=payload.assignment_group_id,
                               device_name=payload.device_name, device_ip_address=payload.device_ip_address,
                               device_site_name=payload.device_site_name)
     return t

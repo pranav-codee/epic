@@ -19,6 +19,7 @@ def search_tickets(
     category: str | None = None,
     priority: str | None = None,
     employee_id: str | None = None,
+    assignment_group_id: str | None = None,
     q: str | None = None,
     limit: int = 100,
     offset: int = 0,
@@ -27,7 +28,8 @@ def search_tickets(
 ):
     total, rows, applied_limit, applied_offset = service.search(
         db, me=me, ticket_number=ticket_number, status=status, ticket_type=ticket_type,
-        category=category, priority=priority, employee_id=employee_id, q=q,
+        category=category, priority=priority, employee_id=employee_id,
+        assignment_group_id=assignment_group_id, q=q,
         limit=limit, offset=offset,
     )
     return {"total": total, "limit": applied_limit, "offset": applied_offset, "results": rows}
