@@ -201,12 +201,26 @@ export default function AdminTicket() {
           <dd>
             {t.creator?.display_name} ({t.creator?.email})
           </dd>
+          {t.requestor && t.requestor.id !== t.creator?.id && (
+            <>
+              <dt>Requestor</dt>
+              <dd>
+                {t.requestor.display_name} ({t.requestor.email})
+              </dd>
+            </>
+          )}
           <dt>Assignee</dt>
           <dd>
             {t.assignee?.display_name || (
               <span className="muted">Unassigned</span>
             )}
           </dd>
+          {t.location_id && (
+            <>
+              <dt>Location</dt>
+              <dd>{t.location_id}</dd>
+            </>
+          )}
           <dt>Created</dt>
           <dd>{formatUtcDateTime(t.created_at)}</dd>
           <dt>Updated</dt>
@@ -238,6 +252,24 @@ export default function AdminTicket() {
                   </div>
                 )}
               </dd>
+            </>
+          )}
+          {t.breached_reason && (
+            <>
+              <dt>Breached reason</dt>
+              <dd>{t.breached_reason}</dd>
+            </>
+          )}
+          {t.vendor_ticket_id && (
+            <>
+              <dt>Vendor ticket ID</dt>
+              <dd>{t.vendor_ticket_id}</dd>
+            </>
+          )}
+          {t.is_from_email_mgr && (
+            <>
+              <dt>From email manager</dt>
+              <dd>Yes</dd>
             </>
           )}
         </dl>
