@@ -7,6 +7,7 @@ from ..tickets.models import Ticket, PRIORITIES
 from ..tickets import workflow as wf
 from ..catalogue.models import AssignmentGroup
 from ..users.models import UserProfile
+from .models import DailyGroupSnapshot
 from ...core.sla import SLA_HOURS_BY_PRIORITY, AT_RISK_THRESHOLD, BUSINESS_HOURS_SLA_PRIORITY_LEVELS
 from ...core.time import utcnow
 
@@ -339,6 +340,168 @@ def inflow_resolved_open_by_group(db: Session, now: datetime | None = None):
             }
             for name in names
         ],
+    }
+
+
+_DAILY_OPS_TICKET_TYPES = ("INCIDENT", "SERVICE_REQUEST")
+
+
+def take_daily_snapshot(db: Session, snapshot_date=None) -> int:
+    """Writes one DailyGroupSnapshot row per Assignment Group (plus one NULL-group row for
+    the "Unassigned" bucket), capturing each group's current open Incident / Service
+    Request counts. Intended to be called once per day by app.core.daily_snapshot_loop, but
+    also directly callable (e.g. for backfill or tests) with an explicit snapshot_date.
+
+    This is the mechanism daily_ops_summary()'s "Yesterday's Backlog" column reads from —
+    without a persisted point-in-time snapshot, "yesterday's open-ticket count" is
+    unrecoverable once today's tickets have already mutated the live OPEN_STATES-filtered
+    count.
+
+    Idempotent per snapshot_date: any existing rows for that date are deleted and replaced
+    with a freshly computed full set in the same transaction, so re-running for a date that
+    already has rows (a loop restart mid-day, a manual backfill re-run, or two app instances
+    both firing the same day) converges on one consistent end state rather than
+    accumulating duplicates.
+    """
+    snapshot_date = snapshot_date or utcnow().date()
+
+    open_counts = (
+        db.query(Ticket.assignment_group_id, Ticket.ticket_type, func.count(Ticket.id))
+        .filter(Ticket.status.in_(OPEN_STATES))
+        .group_by(Ticket.assignment_group_id, Ticket.ticket_type)
+        .all()
+    )
+
+    by_group: dict = {}
+    for group_id, ticket_type, count in open_counts:
+        bucket = by_group.setdefault(group_id, {"INCIDENT": 0, "SERVICE_REQUEST": 0})
+        if ticket_type in bucket:
+            bucket[ticket_type] = count
+
+    # Every Assignment Group gets a row even if it currently has zero open tickets, so a
+    # later "no snapshot row for this group" is distinguishable from "snapshot row exists
+    # and says zero" — the former means the job never ran for that group, not that its
+    # backlog was empty. The NULL-group ("Unassigned") bucket is always included too, even
+    # if empty, for the same reason.
+    for (group_id,) in db.query(AssignmentGroup.id).all():
+        by_group.setdefault(group_id, {"INCIDENT": 0, "SERVICE_REQUEST": 0})
+    by_group.setdefault(None, {"INCIDENT": 0, "SERVICE_REQUEST": 0})
+
+    db.query(DailyGroupSnapshot).filter(
+        DailyGroupSnapshot.snapshot_date == snapshot_date
+    ).delete(synchronize_session=False)
+
+    for group_id, counts in by_group.items():
+        db.add(DailyGroupSnapshot(
+            snapshot_date=snapshot_date,
+            assignment_group_id=group_id,
+            open_incidents_count=counts["INCIDENT"],
+            open_srs_count=counts["SERVICE_REQUEST"],
+        ))
+    db.commit()
+    return len(by_group)
+
+
+def daily_ops_summary(db: Session, now: datetime | None = None):
+    """Production View A: per Assignment Group, a day-over-day delta — Inflow (Incidents/
+    SRs created today), Closures (Incidents/SRs resolved or fulfilled today), Yesterday's
+    Backlog (from the DailyGroupSnapshot taken for yesterday's date), and Today's Backlog
+    (current open count). Each of the four metrics is split by ticket_type (Incidents vs
+    Service Requests), matching production's layout.
+
+    "Today" = current calendar day to date (00:00 UTC through `now`); "yesterday" = the
+    calendar day immediately before that. Inflow/Closures are period-scoped (only today's
+    creations/resolutions count); Today's Backlog is a point-in-time snapshot of currently-
+    open tickets, independent of the period — same conventions
+    inflow_resolved_open_by_group() above already uses for its month-scoped equivalents.
+
+    Yesterday's Backlog comes from the persisted DailyGroupSnapshot table rather than a live
+    query, since "yesterday's open count" can no longer be reconstructed live once today's
+    tickets have already changed the open-ticket set (see take_daily_snapshot() above). If
+    the snapshot job hasn't run yet for yesterday's date (e.g. first day after deploy), a
+    group simply shows 0 for that column rather than raising — the same "missing data reads
+    as zero" behavior the rest of this module uses for groups with no matching rows.
+
+    Tickets with no assignment_group_id are rolled up under "Unassigned", consistent with
+    inflow_resolved_open_by_group() and group_by_status_crosstab() above.
+    """
+    now = now or utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_date = (today_start - timedelta(days=1)).date()
+
+    group_name = func.coalesce(AssignmentGroup.name, "Unassigned")
+
+    def _by_group_and_type(q):
+        rows = (
+            q.outerjoin(AssignmentGroup, Ticket.assignment_group_id == AssignmentGroup.id)
+            .group_by(group_name, Ticket.ticket_type)
+            .all()
+        )
+        out: dict = {}
+        for name, ticket_type, count in rows:
+            bucket = out.setdefault(name, {"INCIDENT": 0, "SERVICE_REQUEST": 0})
+            if ticket_type in bucket:
+                bucket[ticket_type] = count
+        return out
+
+    inflow = _by_group_and_type(
+        db.query(group_name, Ticket.ticket_type, func.count(Ticket.id)).filter(
+            Ticket.created_at >= today_start,
+            Ticket.created_at <= now,
+            Ticket.ticket_type.in_(_DAILY_OPS_TICKET_TYPES),
+        )
+    )
+
+    resolved_at = func.coalesce(Ticket.resolved_at, Ticket.closed_at)
+    closures = _by_group_and_type(
+        db.query(group_name, Ticket.ticket_type, func.count(Ticket.id)).filter(
+            resolved_at.isnot(None),
+            resolved_at >= today_start,
+            resolved_at <= now,
+            Ticket.ticket_type.in_(_DAILY_OPS_TICKET_TYPES),
+        )
+    )
+
+    today_backlog = _by_group_and_type(
+        db.query(group_name, Ticket.ticket_type, func.count(Ticket.id)).filter(
+            Ticket.status.in_(OPEN_STATES),
+            Ticket.ticket_type.in_(_DAILY_OPS_TICKET_TYPES),
+        )
+    )
+
+    snapshot_rows = (
+        db.query(group_name, DailyGroupSnapshot.open_incidents_count, DailyGroupSnapshot.open_srs_count)
+        .outerjoin(AssignmentGroup, DailyGroupSnapshot.assignment_group_id == AssignmentGroup.id)
+        .filter(DailyGroupSnapshot.snapshot_date == yesterday_date)
+        .all()
+    )
+    yesterday_backlog = {
+        name: {"INCIDENT": inc_count, "SERVICE_REQUEST": sr_count}
+        for name, inc_count, sr_count in snapshot_rows
+    }
+
+    def _get(mapping, name):
+        return mapping.get(name, {"INCIDENT": 0, "SERVICE_REQUEST": 0})
+
+    names = sorted(set(inflow) | set(closures) | set(today_backlog) | set(yesterday_backlog))
+    by_group = []
+    for name in names:
+        inf = _get(inflow, name)
+        clo = _get(closures, name)
+        yb = _get(yesterday_backlog, name)
+        tb = _get(today_backlog, name)
+        by_group.append({
+            "group": name,
+            "inflow": {"incidents": inf["INCIDENT"], "srs": inf["SERVICE_REQUEST"]},
+            "closures": {"incidents": clo["INCIDENT"], "srs": clo["SERVICE_REQUEST"]},
+            "yesterday_backlog": {"incidents": yb["INCIDENT"], "srs": yb["SERVICE_REQUEST"]},
+            "today_backlog": {"incidents": tb["INCIDENT"], "srs": tb["SERVICE_REQUEST"]},
+        })
+
+    return {
+        "today_date": today_start.date().isoformat(),
+        "yesterday_date": yesterday_date.isoformat(),
+        "by_group": by_group,
     }
 
 

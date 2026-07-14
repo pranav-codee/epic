@@ -8,3 +8,4 @@ from .modules.tickets.models import Ticket, TicketComment, TicketAttachment  # n
 from .modules.audit.models import TicketAuditLog  # noqa
 from .modules.notifications.models import NotificationRecord  # noqa
 from .modules.knowledge_base.models import KnowledgeBaseArticle  # noqa
+from .modules.reporting.models import DailyGroupSnapshot  # noqa

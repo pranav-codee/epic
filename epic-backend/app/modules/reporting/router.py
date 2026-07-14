@@ -31,6 +31,16 @@ def sla_adherence(request: Request, db: Session = Depends(get_db),
     return service.sla_adherence_by_priority(db)
 
 
+@router.get("/daily-ops-summary")
+@limiter.limit("30/minute")
+def daily_ops_summary(request: Request, db: Session = Depends(get_db),
+                       _=Depends(require_role(*_DASHBOARD_ROLES))):
+    """Production View A: per Assignment Group, day-over-day Inflow / Closures /
+    Yesterday's Backlog / Today's Backlog (split Incidents/SRs). Same role gate as
+    /overview."""
+    return service.daily_ops_summary(db)
+
+
 @router.get("/group-status-crosstab")
 @limiter.limit("30/minute")
 def group_status_crosstab(request: Request, ticket_type: str = "INCIDENT", db: Session = Depends(get_db),

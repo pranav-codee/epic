@@ -154,16 +154,28 @@ def create_app() -> FastAPI:
     )
     start_notification_retry_loop()
 
+    # Periodic open-ticket-by-group snapshot (Production View A: "Daily Ops Summary").
+    # Safe to run on every app instance behind the load balancer — see
+    # reporting/service.py's take_daily_snapshot(), which deletes-then-reinserts a given
+    # snapshot_date's rows in one transaction, so two instances firing the same day just
+    # both converge on the same end state.
+    from .core.daily_snapshot_loop import (
+        start_background_loop as start_daily_snapshot_loop,
+        stop_background_loop as stop_daily_snapshot_loop,
+    )
+    start_daily_snapshot_loop()
+
     @app.on_event("shutdown")
     def _stop_background_loops():
-        # FIX: both loops used to be fire-and-forget daemon threads with no shutdown
+        # FIX: these loops used to be fire-and-forget daemon threads with no shutdown
         # hook anywhere — on a graceful stop (e.g. SIGTERM during a rolling deploy)
         # the process could exit mid-scan/mid-sweep instead of letting each thread
-        # finish its current unit of work. Signal both to stop and give them a short,
+        # finish its current unit of work. Signal all to stop and give them a short,
         # bounded window to exit cleanly; they remain daemon threads regardless, so a
         # slow/blocked iteration still can't hang process shutdown indefinitely.
         stop_sla_loop()
         stop_notification_retry_loop()
+        stop_daily_snapshot_loop()
 
     return app
 

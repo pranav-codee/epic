@@ -353,6 +353,55 @@ function SlaComplianceSection({ title, data }) {
   );
 }
 
+function DailyOpsSummaryTable({ data }) {
+  if (!data) return <p className="muted">Loading…</p>;
+  const rows = data.by_group || [];
+  return (
+    <div className="chart-card">
+      {!rows.length ? (
+        <p className="muted">No data yet</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th rowSpan={2}>Assignment Group</th>
+              <th colSpan={2}>Inflow</th>
+              <th colSpan={2}>Closures</th>
+              <th colSpan={2}>Yesterday's Backlog</th>
+              <th colSpan={2}>Today's Backlog</th>
+            </tr>
+            <tr>
+              <th>INC</th>
+              <th>SR</th>
+              <th>INC</th>
+              <th>SR</th>
+              <th>INC</th>
+              <th>SR</th>
+              <th>INC</th>
+              <th>SR</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.group}>
+                <td>{r.group}</td>
+                <td>{r.inflow.incidents}</td>
+                <td>{r.inflow.srs}</td>
+                <td>{r.closures.incidents}</td>
+                <td>{r.closures.srs}</td>
+                <td>{r.yesterday_backlog.incidents}</td>
+                <td>{r.yesterday_backlog.srs}</td>
+                <td>{r.today_backlog.incidents}</td>
+                <td>{r.today_backlog.srs}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function slaTone(rate) {
   if (rate == null) return "";
   if (rate >= 90) return "ok";
@@ -373,6 +422,7 @@ export default function Dashboard() {
   const [incidentSlaCompliance, setIncidentSlaCompliance] = useState(null);
   const [serviceRequestSlaCompliance, setServiceRequestSlaCompliance] =
     useState(null);
+  const [dailyOpsSummary, setDailyOpsSummary] = useState(null);
 
   const load = useCallback(() => {
     api.get("/dashboard/overview").then(setData);
@@ -400,6 +450,10 @@ export default function Dashboard() {
       .get("/dashboard/ageing?ticket_type=SERVICE_REQUEST&channel=all")
       .then(setServiceRequestAgeing)
       .catch(() => setServiceRequestAgeing([]));
+    api
+      .get("/dashboard/daily-ops-summary")
+      .then(setDailyOpsSummary)
+      .catch(() => setDailyOpsSummary(null));
     api
       .get("/dashboard/sla-compliance?ticket_type=INCIDENT")
       .then(setIncidentSlaCompliance)
@@ -619,6 +673,16 @@ export default function Dashboard() {
           data={toChartData(data.by_category)}
           total={data.total_tickets}
         />
+      </div>
+
+      {/* --- Daily Ops Summary (production View A) --- */}
+      <div className="card" style={{ marginTop: 24 }}>
+        <h3>Daily Ops Summary</h3>
+        <p className="muted" style={{ marginTop: -4 }}>
+          Per Assignment Group: Inflow, Closures, Yesterday's Backlog, and
+          Today's Backlog, split Incidents (INC) / Service Requests (SR).
+        </p>
+        <DailyOpsSummaryTable data={dailyOpsSummary} />
       </div>
 
       {/* --- Group x Status crosstab (production View D) --- */}

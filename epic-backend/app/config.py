@@ -64,6 +64,16 @@ class Settings(BaseSettings):
     SLA_SCAN_ENABLED: bool = True
     SLA_SCAN_INTERVAL_SECONDS: int = 300   # 5 minutes; tune once real ticket volume is known
 
+    # --- Daily open-ticket-by-group snapshot (app.core.daily_snapshot_loop) ---
+    # Backs Production View A's "Yesterday's Backlog" column (reporting/service.py's
+    # daily_ops_summary()), which needs each Assignment Group's open-ticket count as of
+    # yesterday — a value a live query can no longer answer once today's tickets have
+    # already mutated the open-ticket set. take_daily_snapshot() is idempotent per
+    # snapshot_date (deletes-then-reinserts that date's rows), so a 24h interval that
+    # happens to fire more than once on a given day is harmless.
+    DAILY_SNAPSHOT_ENABLED: bool = True
+    DAILY_SNAPSHOT_INTERVAL_SECONDS: int = 86400   # 24 hours
+
     # --- Misc ---
     BOOTSTRAP_ADMIN_EMAILS: str = ""   # comma-separated emails granted SYSTEM_ADMIN on first login
 
