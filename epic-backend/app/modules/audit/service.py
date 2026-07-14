@@ -25,6 +25,12 @@ class Action:
     CANCELLED = "CANCELLED"
     # SLA scanner escalations (app.core.sla_scanner) — no human actor, actor_id is None.
     SLA_ESCALATED = "SLA_ESCALATED"
+    # SPEC §4 Part 2: the one-time MET/BREACHED evaluation of each independent clock —
+    # response_sla_status on first response, resolution_sla_status on resolution. Kept
+    # distinct from SLA_ESCALATED above, which is the scanner's repeatable "still ticking,
+    # here's a warning" notification, not a final MET/BREACHED verdict.
+    RESPONSE_SLA_EVALUATED = "RESPONSE_SLA_EVALUATED"
+    RESOLUTION_SLA_EVALUATED = "RESOLUTION_SLA_EVALUATED"
 
     # --- System / account security events (no associated ticket) ---
     # These close the A09 (Security Logging & Monitoring Failure) gap: previously role

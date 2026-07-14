@@ -15,12 +15,19 @@ from .state_machine import next_state, event_for_target, allowed_target_states_f
 from . import workflow as wf
 from ..audit import service as audit
 from ..audit.service import Action
+from ..catalogue.models import Location
 from ..notifications import service as notifier
 from ..users.models import UserProfile
 from ...config import get_settings
 from ...core.exceptions import NotFound, Forbidden, DomainError, StorageQuotaExceeded
 from ...core.rbac import Role
-from ...core.sla import compute_due_at
+# SPEC §4 Part 2 (this session): ticket creation/priority-change/first-response/
+# resolution now go through the business-hours engine below instead of the old 24/7
+# compute_due_at() path — see /PROGRESS.md Session 4 and core/sla.py's module docstring.
+from ...core.sla import (
+    compute_business_hours_sla_due_dates, resolve_location_timezone, DEFAULT_SLA_TIMEZONE,
+    business_hours_sla_result, effective_due_at,
+)
 from ...core.time import utcnow
 
 
@@ -99,6 +106,115 @@ def _end_sla_pause(ticket: Ticket) -> None:
         ticket.sla_paused_at = None
 
 
+# ---------- SPEC §4 Part 2: business-hours SLA wiring ----------
+# See /PROGRESS.md Session 4 for the full write-up of the decisions baked into the
+# helpers below (the "first response" definition, the breached_reason enforcement
+# mechanism, and how SPEC §3's pause bookkeeping is consumed here).
+
+def _resolve_sla_timezone(db: Session, location_id: str | None) -> str:
+    """
+    SPEC §4: business hours are measured in the ticket's location's local timezone.
+    Falls back to core.sla.DEFAULT_SLA_TIMEZONE (matching Location's own HO/Asia-Kolkata
+    default) for tickets that have no location at all — SPEC §1 already left
+    Ticket.location_id nullable at the DB level (not every existing user has a
+    home_location yet), and SPEC §4 must still produce a due date either way rather than
+    leaving response_due_at/resolution_due_at NULL.
+    """
+    if location_id:
+        loc = db.query(Location).filter(Location.id == location_id).one_or_none()
+        if loc is not None:
+            try:
+                return resolve_location_timezone(loc)
+            except ValueError:
+                pass
+    return DEFAULT_SLA_TIMEZONE
+
+
+def _apply_sla_evaluation(db: Session, ticket: Ticket, *, field: str, result: str,
+                          breached_reason: str | None, actor) -> None:
+    """
+    Sets `ticket.response_sla_status` or `ticket.resolution_sla_status` to a freshly
+    computed MET/BREACHED result, and is the single choke point both the first-response
+    and resolution evaluation paths funnel through — so a third caller added later can't
+    accidentally bypass the SPEC §1 rule this enforces:
+
+        "breached_reason (free text) — required server-side when either SLA status is
+        Breached."
+
+    Enforced here as app-layer validation (raises DomainError, not a DB constraint, per
+    this session's explicit instructions) rather than at the DB layer, since the DB has
+    no way to express "required only when a sibling column has a specific value."
+    Accepts an already-set `ticket.breached_reason` from an earlier breach on the *other*
+    clock (both SLA statuses share the one breached_reason column on Ticket — see
+    models.py) so a ticket that's already BREACHED on its Response clock doesn't force a
+    second, redundant reason when Resolution also breaches later; a fresh
+    `breached_reason` argument always overrides/updates it if one is supplied.
+    """
+    old = getattr(ticket, field)
+    if result == "BREACHED":
+        reason = (breached_reason or ticket.breached_reason or "").strip()
+        if not reason:
+            raise DomainError(
+                f"breached_reason is required when {field} is set to BREACHED. "
+                "Resubmit this request including a breached_reason.")
+        ticket.breached_reason = reason
+    setattr(ticket, field, result)
+    audit.record(
+        db, ticket_id=ticket.id, actor_id=actor.id if actor else None,
+        action=Action.RESPONSE_SLA_EVALUATED if field == "response_sla_status" else Action.RESOLUTION_SLA_EVALUATED,
+        field=field, old_value=old, new_value=result)
+
+
+def _record_first_response(db: Session, *, ticket: Ticket, actor, at, breached_reason: str | None) -> None:
+    """
+    SPEC §4 Part 2's "on first response" bullet. "First response" is defined (this
+    session's explicit choice, documented in /PROGRESS.md Session 4) as: the first
+    comment added by IT support staff (Engineer/Manager/Admin — the same
+    `_is_engineer()` check used everywhere else in this file) on a ticket that hasn't
+    had one yet. Called from `add_comment()` below.
+    """
+    ticket.first_response_at = at
+    due = effective_due_at(ticket.response_due_at, ticket.sla_paused_total_seconds)
+    result = business_hours_sla_result(due_at=due, actual_at=at)
+    if result is None:
+        # No response_due_at to evaluate against (e.g. a ticket that predates this
+        # session's columns) — first_response_at is still recorded above, just no
+        # MET/BREACHED verdict to render.
+        return
+    _apply_sla_evaluation(db, ticket, field="response_sla_status", result=result,
+                          breached_reason=breached_reason, actor=actor)
+
+
+def _record_resolution(db: Session, *, ticket: Ticket, actor, breached_reason: str | None) -> None:
+    """
+    SPEC §4 Part 2's "on resolution" bullet. Must be called *after* `ticket.resolved_at`
+    is set and after any in-flight SLA pause has been ended (`_end_sla_pause`), so
+    `ticket.sla_paused_total_seconds` reflects the ticket's full paused time before this
+    function reads it.
+
+    SPEC §3 pause-clock note ("Resolution SLA clock pauses during
+    PEND_USER/PEND_3RDPARTY"): the base `status`/`STATUSES` field this session was told
+    to check has no PEND_USER/PEND_3RDPARTY entries (STATUSES in tickets/models.py is
+    OPEN/ASSIGNED/IN_PROGRESS/PENDING_USER/RESOLVED/CLOSED/CANCELLED — no PEND_3RDPARTY,
+    and PENDING_USER isn't the same value as PEND_USER). Those two states DO already
+    exist in this codebase, though — as `workflow_status` values (SPEC §3, Session 2),
+    complete with the `sla_paused_at`/`sla_paused_total_seconds` bookkeeping Session 2
+    built specifically so this moment could consume it. Rather than re-reading that as
+    "the statuses don't exist, skip the pause math," this session wires resolution
+    evaluation against `sla_paused_total_seconds` (via `effective_due_at()`) regardless
+    of which of the two mutation paths (`change_status` or `change_workflow_status`)
+    actually resolved the ticket — both already call `_end_sla_pause()` before this
+    function runs. See /PROGRESS.md Session 4 for the full reasoning on this deviation
+    from a literal reading of the STATUSES check.
+    """
+    due = effective_due_at(ticket.resolution_due_at, ticket.sla_paused_total_seconds)
+    result = business_hours_sla_result(due_at=due, actual_at=ticket.resolved_at)
+    if result is None:
+        return
+    _apply_sla_evaluation(db, ticket, field="resolution_sla_status", result=result,
+                          breached_reason=breached_reason, actor=actor)
+
+
 # ---------- Core mutations ----------
 
 def create_ticket(db: Session, *, creator, title: str, description: str, ticket_type: str, category: str,
@@ -122,6 +238,13 @@ def create_ticket(db: Session, *, creator, title: str, description: str, ticket_
     # caller (e.g. an agent logging on someone's behalf) may override it explicitly.
     effective_location_id = location_id or getattr(creator, "home_location_id", None)
 
+    # SPEC §4 Part 2: Response + Resolution SLA due timestamps, computed via the Part 1
+    # business-hours engine in the ticket's location's local timezone — replaces the old
+    # 24/7 compute_due_at() path entirely for new tickets.
+    sla_timezone = _resolve_sla_timezone(db, effective_location_id)
+    sla_due_dates = compute_business_hours_sla_due_dates(
+        ticket_type=ticket_type, priority=priority, start=now, timezone_name=sla_timezone)
+
     t = Ticket(
         ticket_number=number,
         creator_id=creator.id,
@@ -137,7 +260,10 @@ def create_ticket(db: Session, *, creator, title: str, description: str, ticket_
         title=title.strip(),
         description=description.strip(),
         created_at=now,
-        sla_due_at=compute_due_at(priority, now),
+        response_due_at=sla_due_dates["response_due_at"],
+        resolution_due_at=sla_due_dates["resolution_due_at"],
+        # Legacy alias kept in sync with resolution_due_at — see models.py comment.
+        sla_due_at=sla_due_dates["resolution_due_at"],
         location_id=effective_location_id,
         channel=channel,
         assignment_group_id=assignment_group_id,
@@ -231,7 +357,8 @@ def assign_ticket(db: Session, *, ticket_id: str, assignee_id: str, actor) -> Ti
     return ticket
 
 
-def change_status(db: Session, *, ticket_id: str, target_status: str, actor) -> Ticket:
+def change_status(db: Session, *, ticket_id: str, target_status: str, actor,
+                  breached_reason: str | None = None) -> Ticket:
     if not _is_engineer(actor):
         raise Forbidden("Only IT Engineers may change ticket status")
     if target_status not in STATUSES:
@@ -251,7 +378,19 @@ def change_status(db: Session, *, ticket_id: str, target_status: str, actor) -> 
         # A ticket can reach a terminal legacy status while workflow_status is still sitting
         # in a pause state (e.g. an engineer resolves via this endpoint rather than the §3
         # workflow-status one) — stop the pause clock either way so it never runs forever.
+        # Must happen BEFORE _record_resolution below so sla_paused_total_seconds already
+        # reflects this final pause segment.
         _end_sla_pause(ticket)
+
+    if new_state == RESOLVED:
+        # SPEC §4 Part 2: evaluate resolution_sla_status now that resolved_at is set.
+        # Can raise DomainError (breached_reason required) — caught below so nothing
+        # from this request (including the status change itself) is left half-applied.
+        try:
+            _record_resolution(db, ticket=ticket, actor=actor, breached_reason=breached_reason)
+        except DomainError:
+            db.rollback()
+            raise
 
     audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.STATUS_CHANGE,
                  field="status", old_value=old, new_value=new_state)
@@ -272,7 +411,8 @@ def change_status(db: Session, *, ticket_id: str, target_status: str, actor) -> 
     return ticket
 
 
-def change_workflow_status(db: Session, *, ticket_id: str, target_workflow_status: str, actor) -> Ticket:
+def change_workflow_status(db: Session, *, ticket_id: str, target_workflow_status: str, actor,
+                           breached_reason: str | None = None) -> Ticket:
     """SPEC §3: move a ticket through its ticket-type-specific workflow
     (PROGRESSING/ON_HOLD/PEND_3RDPARTY/PEND_USER/APPROVED/RESOLVED for Incidents;
     PROGRESSING/ON_HOLD/PEND_3RDPARTY/PEND_USER/IN_APPROVAL/FULFILLED for Service Requests).
@@ -332,6 +472,14 @@ def change_workflow_status(db: Session, *, ticket_id: str, target_workflow_statu
         # already reads it (see Ticket.sla_status, core/sla.py) reflects the workflow
         # reaching RESOLVED/FULFILLED, without needing a §3-aware rewrite this session.
         ticket.resolved_at = utcnow()
+        # SPEC §4 Part 2: evaluate resolution_sla_status now that resolved_at is set.
+        # was_paused/will_be_paused above already ended any in-flight pause (via
+        # _end_sla_pause) before this point, so sla_paused_total_seconds is final.
+        try:
+            _record_resolution(db, ticket=ticket, actor=actor, breached_reason=breached_reason)
+        except DomainError:
+            db.rollback()
+            raise
 
     audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.WORKFLOW_STATUS_CHANGE,
                  field="workflow_status", old_value=current, new_value=new_state)
@@ -389,16 +537,30 @@ def change_priority(db: Session, *, ticket_id: str, priority: str, actor) -> Tic
     ticket.priority = priority
     # Re-baseline the SLA clock from the moment of re-prioritization — a ticket bumped to
     # CRITICAL should get a fresh CRITICAL-length window rather than inheriting a due date
-    # computed under the old priority's (usually longer) target.
-    ticket.sla_due_at = compute_due_at(priority, utcnow())
+    # computed under the old priority's (usually longer) target. SPEC §4 Part 2 (this
+    # session): recomputed via the business-hours engine, same as create_ticket, rather
+    # than the old 24/7 compute_due_at() — included in this session's scope alongside
+    # creation because leaving change_priority on the old engine while creation moved to
+    # the new one would silently desynchronize sla_due_at from response_due_at/
+    # resolution_due_at the moment anyone re-prioritized a ticket (see /PROGRESS.md
+    # Session 4).
+    sla_timezone = _resolve_sla_timezone(db, ticket.location_id)
+    sla_due_dates = compute_business_hours_sla_due_dates(
+        ticket_type=ticket.ticket_type, priority=priority, start=utcnow(), timezone_name=sla_timezone)
+    ticket.response_due_at = sla_due_dates["response_due_at"]
+    ticket.resolution_due_at = sla_due_dates["resolution_due_at"]
+    ticket.sla_due_at = sla_due_dates["resolution_due_at"]
     # FIX: this reset was previously missing, even though models.py's column comment already
     # claimed it happened. Without it, a ticket already notified AT_RISK/BREACHED under its
     # *old* priority's SLA window kept those notified-at flags set after re-prioritization —
     # so app.core.sla_scanner would treat it as "already handled" and silently skip notifying
-    # for its new (often much tighter) window. Clearing both gives a re-prioritized ticket a
-    # fresh notification cycle, matching the fresh sla_due_at it just got.
+    # for its new (often much tighter) window. Clearing both (and now the Response clock's
+    # own pair of columns — SPEC §4 Part 2) gives a re-prioritized ticket a fresh
+    # notification cycle, matching the fresh due dates it just got.
     ticket.sla_at_risk_notified_at = None
     ticket.sla_breached_notified_at = None
+    ticket.response_sla_at_risk_notified_at = None
+    ticket.response_sla_breached_notified_at = None
     audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.PRIORITY_CHANGE,
                  field="priority", old_value=old, new_value=priority)
     db.commit(); db.refresh(ticket)
@@ -407,13 +569,29 @@ def change_priority(db: Session, *, ticket_id: str, priority: str, actor) -> Tic
     return ticket
 
 
-def add_comment(db: Session, *, ticket_id: str, text: str, actor) -> TicketComment:
+def add_comment(db: Session, *, ticket_id: str, text: str, actor,
+                breached_reason: str | None = None) -> TicketComment:
     ticket = get_ticket_or_404(db, ticket_id)
     _ensure_visibility(ticket, actor)
     c = TicketComment(ticket_id=ticket.id, author_id=actor.id, text=text.strip())
     db.add(c); db.flush()
     audit.record(db, ticket_id=ticket.id, actor_id=actor.id, action=Action.COMMENT_ADDED,
                  metadata={"comment_id": c.id, "text_preview": text[:120]})
+
+    # SPEC §4 Part 2: "first response" — see _record_first_response's docstring and
+    # /PROGRESS.md Session 4 for the definition this session settled on (first
+    # support-staff comment). Only fires once per ticket (guarded by
+    # ticket.first_response_at is None). Can raise DomainError (breached_reason
+    # required) — caught below so nothing from this request, including the comment
+    # itself, is left half-applied.
+    if _is_engineer(actor) and ticket.first_response_at is None:
+        try:
+            _record_first_response(db, ticket=ticket, actor=actor, at=utcnow(),
+                                   breached_reason=breached_reason)
+        except DomainError:
+            db.rollback()
+            raise
+
     db.commit(); db.refresh(c)
 
     # Notify on new comment (D2 user decision, 30-Jun-2026): yes, comments trigger update notification.

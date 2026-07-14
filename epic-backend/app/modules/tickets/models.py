@@ -94,8 +94,22 @@ class Ticket(Base):
     resolved_at = Column(DateTime, nullable=True)
     closed_at = Column(DateTime, nullable=True)
 
+    # --- SPEC §4 Part 2: business-hours Response/Resolution due timestamps ---
+    # Computed at creation (and refreshed on priority change) via
+    # app.core.sla.compute_business_hours_sla_due_dates — the Part 1 business-hours
+    # engine — in the ticket's location's local timezone, instead of the old 24/7
+    # SLA_HOURS_BY_PRIORITY/compute_due_at path. Independent per SPEC §4 ("Independent
+    # Response + Resolution clocks") — each is its own column, each computed separately
+    # from the same start time.
+    response_due_at = Column(DateTime, nullable=True)
+    resolution_due_at = Column(DateTime, nullable=True)
+
     # --- SPEC §1: independent response/resolution SLA status fields ---
-    # NULL means "not yet evaluated"; MET/BREACHED once SLA-phase logic (SPEC §4) sets them.
+    # NULL means "not yet evaluated". SPEC §4 Part 2 (this session) now actually sets
+    # these: response_sla_status on first response (tickets/service.py's
+    # _record_first_response), resolution_sla_status on resolution
+    # (_record_resolution). See /PROGRESS.md Session 4 for the "first response"
+    # definition this session settled on.
     response_sla_status = Column(String(16), nullable=True)
     resolution_sla_status = Column(String(16), nullable=True)
     # Free text, required server-side (app-layer, not a DB constraint) once either SLA status
@@ -116,16 +130,33 @@ class Ticket(Base):
     # --- SPEC §1: misc nullable flags ---
     vendor_ticket_id = Column(String(64), nullable=True)
     is_from_email_mgr = Column(Boolean, nullable=True)
-    # SLA (Service Level Agreement) target resolution deadline, set at creation time
-    # (and refreshed on priority change) from app.core.sla.SLA_HOURS_BY_PRIORITY.
+    # Legacy alias: kept in sync with `resolution_due_at` above (same value, every time
+    # it's set) purely so the pre-existing `Ticket.sla_status` property below and
+    # SPEC §8's (not-yet-built) reporting/export code — which both still read
+    # `sla_due_at` specifically — keep working unchanged. New SPEC §4 code should read
+    # `response_due_at`/`resolution_due_at` directly instead of this column.
     sla_due_at = Column(DateTime, nullable=True)
-    # Set (once) by app.core.sla_scanner the first time this ticket is observed
-    # AT_RISK / BREACHED. A non-NULL value means "don't send this escalation again."
+    # SPEC §4 Part 2 (this session): these two now represent the *Resolution* clock's
+    # scanner notification bookkeeping specifically — app.core.sla_scanner scans the
+    # Response and Resolution clocks independently, and the Response clock gets its own
+    # pair of columns below rather than overloading these further. (Before this session
+    # there was only one clock, so these columns' meaning was unambiguous; SPEC §4 Part 2
+    # narrows what they mean without needing a rename/migration, since "the ticket's
+    # overall due-date scan" *is* the Resolution clock once Response is split out.)
+    # Set (once) the first time this ticket is observed AT_RISK / BREACHED on its
+    # Resolution clock. A non-NULL value means "don't send this escalation again."
     # Both reset to NULL whenever sla_due_at is recomputed (see change_priority in
     # tickets/service.py) so a re-prioritized ticket gets a fresh notification cycle
     # instead of being permanently "already notified" from its old SLA window.
     sla_at_risk_notified_at = Column(DateTime, nullable=True)
     sla_breached_notified_at = Column(DateTime, nullable=True)
+    # --- SPEC §4 Part 2: Response clock's own scanner notification bookkeeping ---
+    # Mirrors sla_at_risk_notified_at/sla_breached_notified_at immediately above (now the
+    # Resolution clock's columns) but tracked separately for the Response clock, since
+    # SPEC §4 requires the two clocks to be scanned independently and a ticket can be
+    # AT_RISK/BREACHED on one without being anywhere near the other.
+    response_sla_at_risk_notified_at = Column(DateTime, nullable=True)
+    response_sla_breached_notified_at = Column(DateTime, nullable=True)
 
     creator = relationship("UserProfile", foreign_keys=[creator_id])
     requestor = relationship("UserProfile", foreign_keys=[requestor_id])

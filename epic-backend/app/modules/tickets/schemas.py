@@ -41,12 +41,22 @@ class TicketAssignIn(BaseModel):
 
 class StatusChangeIn(BaseModel):
     target_status: str
+    # SPEC §4 Part 2 / SPEC §1: required server-side only if this transition ends up
+    # setting resolution_sla_status to BREACHED (i.e. target_status == RESOLVED and the
+    # ticket missed its resolution due date). Optional here because the caller can't know
+    # in advance whether resolving now will breach — if it does and this is omitted, the
+    # request is rejected (400) asking for it to be resubmitted with a reason.
+    breached_reason: Optional[str] = None
 
 
 class WorkflowStatusChangeIn(BaseModel):
     """SPEC §3: target for the ticket-type-specific workflow (distinct from StatusChangeIn's
     `target_status`, which drives the pre-existing generic `status` field)."""
     target_workflow_status: str
+    # SPEC §4 Part 2 / SPEC §1: same breached_reason contract as StatusChangeIn above —
+    # required only if reaching a terminal workflow state (RESOLVED/FULFILLED) breaches
+    # resolution_sla_status.
+    breached_reason: Optional[str] = None
 
 
 class PriorityChangeIn(BaseModel):
@@ -59,6 +69,11 @@ class TicketTypeChangeIn(BaseModel):
 
 class CommentCreateIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    # SPEC §4 Part 2 / SPEC §1: required server-side only if this is the ticket's first
+    # support-staff comment (SPEC §4 Part 2's "first response") and it ends up setting
+    # response_sla_status to BREACHED. See StatusChangeIn's breached_reason comment for
+    # the same "resubmit with a reason if rejected" contract.
+    breached_reason: Optional[str] = None
 
 
 class UserBrief(BaseModel):
@@ -122,15 +137,25 @@ class TicketOut(BaseModel):
     resolved_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     sla_due_at: Optional[datetime] = None
+    # SPEC §4 Part 2 — the independent Response/Resolution due timestamps the
+    # business-hours engine computes at creation (and refreshes on priority change).
+    # sla_due_at above is kept in sync with resolution_due_at for legacy/reporting
+    # compatibility; new UI should read these two directly.
+    response_due_at: Optional[datetime] = None
+    resolution_due_at: Optional[datetime] = None
     response_sla_status: Optional[str] = None
     resolution_sla_status: Optional[str] = None
     breached_reason: Optional[str] = None
     sla_status: str = "NONE"
-    # Set once by app.core.sla_scanner the first time this ticket is observed AT_RISK/BREACHED —
-    # non-NULL means "an escalation notification for this state has already gone out." Exposed
-    # so the ticket detail UI can show escalation history, not just the current computed status.
+    # Set once by app.core.sla_scanner the first time this ticket is observed AT_RISK/BREACHED
+    # on its Resolution clock (SPEC §4 Part 2 — see tickets/models.py) — non-NULL means "an
+    # escalation notification for this state has already gone out." Exposed so the ticket
+    # detail UI can show escalation history, not just the current computed status.
     sla_at_risk_notified_at: Optional[datetime] = None
     sla_breached_notified_at: Optional[datetime] = None
+    # Same, but for the Response clock specifically (SPEC §4 Part 2).
+    response_sla_at_risk_notified_at: Optional[datetime] = None
+    response_sla_breached_notified_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

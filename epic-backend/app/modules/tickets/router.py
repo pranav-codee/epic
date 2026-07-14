@@ -69,7 +69,8 @@ def assign(request: Request, ticket_id: str, payload: TicketAssignIn, db: Sessio
 @limiter.limit("30/minute")
 def change_status(request: Request, ticket_id: str, payload: StatusChangeIn, db: Session = Depends(get_db),
                   me=Depends(get_current_user)):
-    return service.change_status(db, ticket_id=ticket_id, target_status=payload.target_status.upper(), actor=me)
+    return service.change_status(db, ticket_id=ticket_id, target_status=payload.target_status.upper(),
+                                 actor=me, breached_reason=payload.breached_reason)
 
 
 @router.post("/{ticket_id}/workflow-status", response_model=TicketOut)
@@ -83,7 +84,7 @@ def change_workflow_status(request: Request, ticket_id: str, payload: WorkflowSt
     return service.change_workflow_status(
         db, ticket_id=ticket_id,
         target_workflow_status=payload.target_workflow_status.upper().strip(),
-        actor=me)
+        actor=me, breached_reason=payload.breached_reason)
 
 
 @router.post("/{ticket_id}/priority", response_model=TicketOut)
@@ -110,7 +111,8 @@ def cancel(request: Request, ticket_id: str, db: Session = Depends(get_db), me=D
 @limiter.limit("30/minute")
 def add_comment(request: Request, ticket_id: str, payload: CommentCreateIn, db: Session = Depends(get_db),
                 me=Depends(get_current_user)):
-    c = service.add_comment(db, ticket_id=ticket_id, text=payload.text, actor=me)
+    c = service.add_comment(db, ticket_id=ticket_id, text=payload.text, actor=me,
+                            breached_reason=payload.breached_reason)
     # Eagerly attach author for response shape.
     c.author = me
     return c

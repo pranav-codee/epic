@@ -5,19 +5,28 @@ Centralizes the resolution-time targets per priority so ticket creation, priorit
 changes, and dashboard reporting all agree on the same numbers. Hours are wall-clock
 hours from ticket creation (v1 — no business-hours calendar yet).
 
-SPEC §4 (business-hours SLA model) — Part 1 of 2
---------------------------------------------------
+SPEC §4 (business-hours SLA model) — Part 1 AND Part 2
+--------------------------------------------------------
 Everything above this docstring section (`SLA_HOURS_BY_PRIORITY`, `compute_due_at`,
-`sla_status`, `AT_RISK_THRESHOLD`) is the pre-existing 24/7 wall-clock engine. It is
-UNTOUCHED and still the one actually consumed by `tickets/service.py` and
-`core/sla_scanner.py` today.
+`sla_status`, `AT_RISK_THRESHOLD`) is the pre-existing 24/7 wall-clock engine. It remains
+UNTOUCHED (still exists, still importable) but as of Part 2 (see below and /PROGRESS.md
+Session 4) it is no longer what `tickets/service.py`'s `create_ticket`/`change_priority`
+or `core/sla_scanner.py` actually use for SLA due-date/status computation — both now go
+through the business-hours engine below. `compute_due_at`/`sla_status` are left in place
+only because nothing forced their removal and deleting working code the moment it stops
+being the "current" path is unnecessary churn; a future cleanup session can decide whether
+anything still legitimately needs the 24/7 semantics.
 
-Everything below is a NEW, STANDALONE business-hours SLA engine for SPEC §4. Per this
-session's explicit scope, it is NOT wired into ticket creation, status changes, or
-`sla_scanner.py` yet — that wiring is Part 2 (see /PROGRESS.md). This part only has to be
-correct and independently testable: given a location's IANA timezone, a ticket_type, a
-priority, and a start timestamp, compute the Response/Resolution SLA due timestamps and
-the business-hours elapsed between two timestamps.
+The section immediately below ("Part 1 of 2") is the STANDALONE business-hours
+calculation engine: given a location's IANA timezone, a ticket_type, a priority, and a
+start timestamp, compute the Response/Resolution SLA due timestamps and the
+business-hours elapsed between two timestamps. It has no knowledge of `Ticket` rows.
+
+Further below that ("Part 2 of 2— wiring helpers") are the functions Part 2 (this
+session) added specifically so `tickets/service.py` and `core/sla_scanner.py` can
+evaluate MET/BREACHED (for a clock that has already fired) and live AT_RISK/BREACHED/
+ON_TRACK (for a clock still ticking) against the due dates the engine above produces,
+without either of those modules needing to reimplement business-hours math themselves.
 
 Business-hours calendar (SPEC §4/§10): Monday-Friday, 09:00-18:00 *local* time in the
 ticket's location timezone, no holiday calendar (explicitly out of scope per SPEC §10).
@@ -288,3 +297,87 @@ def compute_business_hours_sla_due_dates(
         "response_due_at": add_business_minutes(start, targets["response_minutes"], timezone_name),
         "resolution_due_at": add_business_minutes(start, targets["resolution_minutes"], timezone_name),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════
+# SPEC §4 — Part 2 of 2: wiring helpers. Added this session (see /PROGRESS.md Session 4)
+# so `tickets/service.py` (creation, first-response, resolution) and
+# `core/sla_scanner.py` (live AT_RISK/BREACHED polling) can consume the Part 1 engine
+# above without either of those modules needing to reimplement business-hours math
+# themselves.
+# ═══════════════════════════════════════════════════════════════════════════════════
+
+# Fallback IANA timezone used only when a ticket has no resolvable location (SPEC §1 left
+# Ticket.location_id nullable at the DB level — see tickets/models.py's comment — since
+# not every existing user has a home_location yet). Matches
+# catalogue.models.Location's own column default ("Asia/Kolkata", the HO location's
+# zone), so an unset location behaves like the default HQ timezone rather than an
+# arbitrary guess.
+DEFAULT_SLA_TIMEZONE = "Asia/Kolkata"
+
+
+def effective_due_at(due_at: datetime | None, paused_seconds: float | int | None = 0) -> datetime | None:
+    """
+    Shifts a persisted Response/Resolution due timestamp forward by however long the
+    ticket has spent paused so far (SPEC §3: "Resolution SLA clock pauses during
+    PEND_USER/PEND_3RDPARTY", tracked in `Ticket.sla_paused_total_seconds` since
+    Session 2 specifically so a later §4 session could use it — this is that session).
+
+    Deliberately a *plain* wall-clock shift (`due_at + timedelta(seconds=paused_seconds)`),
+    not a second business-hours conversion of the paused duration itself: "the clock
+    pauses" means that stretch of real time simply doesn't count against the SLA, so the
+    due date moves out by exactly the wall-clock duration that was paused. Part 1's module
+    docstring (assumption #6) flagged this exact question as unresolved; this is Part 2's
+    answer — the simpler, more predictable interpretation, rather than re-running
+    business-hours math on the pause window itself (which could itself span
+    weekends/evenings and compound in confusing ways). See /PROGRESS.md Session 4 for the
+    full reasoning, including why this only applies to the Resolution clock in practice
+    today (no code path currently pauses before a first response).
+
+    Returns `due_at` unchanged (including None) if there's nothing to shift.
+    """
+    if due_at is None or not paused_seconds:
+        return due_at
+    return due_at + timedelta(seconds=paused_seconds)
+
+
+def business_hours_sla_result(*, due_at: datetime | None, actual_at: datetime) -> str | None:
+    """
+    MET/BREACHED for a clock that has actually fired — SPEC §4 Part 2's "on first
+    response, evaluate response_sla_status" / "on resolution, evaluate
+    resolution_sla_status" moment. `due_at` should already have
+    `effective_due_at()` applied by the caller if pause time needs to count.
+
+    Returns None (caller should treat this as "cannot evaluate, leave the status field
+    alone") if `due_at` is unknown — e.g. a ticket created before this session's
+    `response_due_at`/`resolution_due_at` columns existed.
+    """
+    if due_at is None:
+        return None
+    return "MET" if actual_at <= due_at else "BREACHED"
+
+
+def business_hours_live_status(*, due_at: datetime | None, created_at: datetime, timezone_name: str,
+                                target_minutes: float, now: datetime | None = None,
+                                paused_seconds: float | int | None = 0) -> str:
+    """
+    Live AT_RISK/BREACHED/ON_TRACK read for a clock that hasn't fired yet — what
+    `core/sla_scanner.py` polls on a timer for the Response and Resolution clocks
+    independently (SPEC §4: "Independent Response + Resolution clocks"). Business-hours
+    -aware replacement for the pre-existing wall-clock `sla_status()` above, used only for
+    the "still ticking" case — a clock that has already fired is evaluated once, directly,
+    via `business_hours_sla_result()` above, never through this function.
+
+    Returns "NONE" if `due_at` is unknown.
+    """
+    if due_at is None:
+        return "NONE"
+    now = now or utcnow()
+    eff_due = effective_due_at(due_at, paused_seconds)
+    if now > eff_due:
+        return "BREACHED"
+    elapsed_minutes = business_hours_elapsed(created_at, now, timezone_name).total_seconds() / 60.0
+    remaining_minutes = target_minutes - elapsed_minutes
+    if target_minutes > 0 and (remaining_minutes / target_minutes) <= AT_RISK_THRESHOLD:
+        return "AT_RISK"
+    return "ON_TRACK"
