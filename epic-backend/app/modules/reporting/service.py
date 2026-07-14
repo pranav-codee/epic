@@ -4,8 +4,15 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..tickets.models import Ticket, PRIORITIES
-from ...core.sla import SLA_HOURS_BY_PRIORITY, AT_RISK_THRESHOLD
+from ...core.sla import SLA_HOURS_BY_PRIORITY, AT_RISK_THRESHOLD, BUSINESS_HOURS_SLA_PRIORITY_LEVELS
 from ...core.time import utcnow
+
+# SPEC §4: rolling per-priority SLA adherence-% target (P1 99%, P2 98%, P3 97%, P4 95%),
+# keyed by the same P1-P4 levels BUSINESS_HOURS_SLA_PRIORITY_LEVELS (core/sla.py) maps
+# CRITICAL/HIGH/MEDIUM/LOW onto. No adherence-% constant existed anywhere yet (core/sla.py
+# only had the response/resolution time targets, not the rolling compliance-% target on top
+# of them), so it's added here rather than invented ad hoc inside the aggregation function.
+SLA_ADHERENCE_TARGET_PCT = {"P1": 99, "P2": 98, "P3": 97, "P4": 95}
 
 OPEN_STATES = ("OPEN", "ASSIGNED", "IN_PROGRESS", "PENDING_USER")
 TREND_DAYS = 14
@@ -141,6 +148,63 @@ def overview(db: Session):
         "sla": _sla_breakdown(db),
         "trend": _trend(db),
     }
+
+
+def sla_adherence_by_priority(db: Session):
+    """SPEC §4: rolling per-priority SLA adherence — for each priority (CRITICAL/HIGH/
+    MEDIUM/LOW) and each independent clock (response/resolution), returns achieved count,
+    breached count, total (evaluated) count, achieved %, and the target % (P1 99/P2 98/
+    P3 97/P4 95, via SLA_ADHERENCE_TARGET_PCT above).
+
+    Sourced from the ticket-level `response_sla_status`/`resolution_sla_status` fields
+    (tickets/models.py) — the one-time MET/BREACHED verdict the business-hours SLA engine
+    writes at first response / resolution (tickets/service.py's `_apply_sla_evaluation`) —
+    which is a different, newer source of truth than the legacy wall-clock `sla_due_at`
+    fields `_sla_breakdown()` above still uses. A ticket whose clock hasn't fired yet (still
+    NULL — not yet first-responded-to / not yet resolved) contributes to neither achieved
+    nor breached for that clock; only evaluated tickets count toward the total and the
+    achieved %, consistent with how `_sla_breakdown()`'s own `compliance_rate` already
+    excludes not-yet-evaluated tickets.
+    """
+    rows = db.query(Ticket.priority, Ticket.response_sla_status, Ticket.resolution_sla_status).all()
+
+    clocks = ("response", "resolution")
+    counts = {p: {c: {"achieved": 0, "breached": 0} for c in clocks} for p in PRIORITIES}
+
+    for priority, response_status, resolution_status in rows:
+        if priority not in counts:
+            # Defensive: `priority` has no DB-level check constraint, so guard against a
+            # stale/unexpected value rather than KeyError on it.
+            continue
+        if response_status == "MET":
+            counts[priority]["response"]["achieved"] += 1
+        elif response_status == "BREACHED":
+            counts[priority]["response"]["breached"] += 1
+        if resolution_status == "MET":
+            counts[priority]["resolution"]["achieved"] += 1
+        elif resolution_status == "BREACHED":
+            counts[priority]["resolution"]["breached"] += 1
+
+    result = {}
+    for priority in PRIORITIES:
+        level = BUSINESS_HOURS_SLA_PRIORITY_LEVELS.get(priority)
+        target_pct = SLA_ADHERENCE_TARGET_PCT.get(level)
+        by_clock = {}
+        for clock in clocks:
+            achieved = counts[priority][clock]["achieved"]
+            breached = counts[priority][clock]["breached"]
+            total = achieved + breached
+            achieved_pct = round((achieved / total) * 100, 1) if total else None
+            by_clock[clock] = {
+                "achieved": achieved,
+                "breached": breached,
+                "total": total,
+                "achieved_pct": achieved_pct,
+                "target_pct": target_pct,
+            }
+        result[priority] = {"level": level, **by_clock}
+
+    return result
 
 
 def engineer_workload(db: Session, engineer_id: str):

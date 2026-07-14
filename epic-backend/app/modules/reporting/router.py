@@ -21,6 +21,16 @@ def overview(request: Request, db: Session = Depends(get_db),
     return service.overview(db)
 
 
+@router.get("/sla-adherence")
+@limiter.limit("30/minute")
+def sla_adherence(request: Request, db: Session = Depends(get_db),
+                  _=Depends(require_role(*_DASHBOARD_ROLES))):
+    """SPEC §4: rolling per-priority SLA adherence (achieved% vs target%), split by
+    response/resolution clock. Same role gate as /overview, since this is the same
+    dashboard's data, just a dedicated aggregation rather than a slice of overview()."""
+    return service.sla_adherence_by_priority(db)
+
+
 @router.get("/engineer/me")
 @limiter.limit("30/minute")
 def my_workload(request: Request, db: Session = Depends(get_db),
