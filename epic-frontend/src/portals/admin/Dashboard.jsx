@@ -74,6 +74,10 @@ const AGEING_BUCKETS = [
   { key: ">30", label: ">30 days" },
 ];
 
+// Mirrors tickets/models.py's PRIORITIES — fixed row order for the SLA Compliance
+// (Priority x Response/Resolution) matrix below.
+const SLA_PRIORITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+
 function colorFor(map, key, index) {
   return map[key] || FALLBACK_PALETTE[index % FALLBACK_PALETTE.length];
 }
@@ -226,6 +230,129 @@ function AgeingTable({ title, rows }) {
   );
 }
 
+function clockCellClass(cell) {
+  if (!cell || cell.achieved_pct == null || cell.target_pct == null) return "";
+  return cell.achieved_pct < cell.target_pct
+    ? "sla-cell-below-target"
+    : "sla-cell-ok";
+}
+
+function SlaComplianceMatrix({ data }) {
+  if (!data) return <p className="muted">Loading…</p>;
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th rowSpan={2}>Priority</th>
+          <th colSpan={3}>Response</th>
+          <th colSpan={3}>Resolution</th>
+        </tr>
+        <tr>
+          <th>Achieved</th>
+          <th>Breached</th>
+          <th>Achieved %</th>
+          <th>Achieved</th>
+          <th>Breached</th>
+          <th>Achieved %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {SLA_PRIORITIES.map((p) => {
+          const row = data[p];
+          const response = row?.response;
+          const resolution = row?.resolution;
+          return (
+            <tr key={p}>
+              <td>
+                <span
+                  className="dot"
+                  style={{ background: PRIORITY_COLORS[p], marginRight: 8 }}
+                />
+                {p}
+              </td>
+              <td>{response?.achieved ?? 0}</td>
+              <td>{response?.breached ?? 0}</td>
+              <td className={clockCellClass(response)}>
+                {response?.achieved_pct != null
+                  ? `${response.achieved_pct}% (target ${response.target_pct}%)`
+                  : "—"}
+              </td>
+              <td>{resolution?.achieved ?? 0}</td>
+              <td>{resolution?.breached ?? 0}</td>
+              <td className={clockCellClass(resolution)}>
+                {resolution?.achieved_pct != null
+                  ? `${resolution.achieved_pct}% (target ${resolution.target_pct}%)`
+                  : "—"}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function BreachedTicketsTable({ label, rows }) {
+  return (
+    <details style={{ marginTop: 12 }}>
+      <summary>
+        {label} breached tickets ({rows ? rows.length : 0})
+      </summary>
+      {!rows || rows.length === 0 ? (
+        <p className="muted">No breached tickets on this clock</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Ticket #</th>
+              <th>Created</th>
+              <th>Title</th>
+              <th>Priority</th>
+              <th>Assignment Group</th>
+              <th>Technician</th>
+              <th>Breached Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((t) => (
+              <tr key={t.ticket_number}>
+                <td>{t.ticket_number}</td>
+                <td>
+                  {t.created_at
+                    ? new Date(t.created_at + "Z").toLocaleString()
+                    : "—"}
+                </td>
+                <td>{t.title}</td>
+                <td>{t.priority}</td>
+                <td>{t.assignment_group || "Unassigned"}</td>
+                <td>{t.technician || "Unassigned"}</td>
+                <td>{t.breached_reason || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </details>
+  );
+}
+
+function SlaComplianceSection({ title, data }) {
+  return (
+    <div className="chart-card">
+      <h4 style={{ marginTop: 0 }}>{title}</h4>
+      <SlaComplianceMatrix data={data?.adherence_by_priority} />
+      <BreachedTicketsTable
+        label="Response"
+        rows={data?.breached_tickets?.response}
+      />
+      <BreachedTicketsTable
+        label="Resolution"
+        rows={data?.breached_tickets?.resolution}
+      />
+    </div>
+  );
+}
+
 function slaTone(rate) {
   if (rate == null) return "";
   if (rate >= 90) return "ok";
@@ -243,6 +370,9 @@ export default function Dashboard() {
   const [monitoringAgeing, setMonitoringAgeing] = useState(null);
   const [humanIncidentAgeing, setHumanIncidentAgeing] = useState(null);
   const [serviceRequestAgeing, setServiceRequestAgeing] = useState(null);
+  const [incidentSlaCompliance, setIncidentSlaCompliance] = useState(null);
+  const [serviceRequestSlaCompliance, setServiceRequestSlaCompliance] =
+    useState(null);
 
   const load = useCallback(() => {
     api.get("/dashboard/overview").then(setData);
@@ -270,6 +400,14 @@ export default function Dashboard() {
       .get("/dashboard/ageing?ticket_type=SERVICE_REQUEST&channel=all")
       .then(setServiceRequestAgeing)
       .catch(() => setServiceRequestAgeing([]));
+    api
+      .get("/dashboard/sla-compliance?ticket_type=INCIDENT")
+      .then(setIncidentSlaCompliance)
+      .catch(() => setIncidentSlaCompliance(null));
+    api
+      .get("/dashboard/sla-compliance?ticket_type=SERVICE_REQUEST")
+      .then(setServiceRequestSlaCompliance)
+      .catch(() => setServiceRequestSlaCompliance(null));
   }, []);
 
   useEffect(() => {
@@ -510,6 +648,25 @@ export default function Dashboard() {
           <AgeingTable title="PRTG Alerts" rows={monitoringAgeing} />
           <AgeingTable title="Incidents" rows={humanIncidentAgeing} />
           <AgeingTable title="Service Requests" rows={serviceRequestAgeing} />
+        </div>
+      </div>
+
+      {/* --- SLA Compliance (production View B) --- */}
+      <div className="card" style={{ marginTop: 24 }}>
+        <h3>SLA Compliance</h3>
+        <p className="muted" style={{ marginTop: -4 }}>
+          Achieved % vs target % by Priority × Response/Resolution, with a
+          drill-down list of breached tickets.
+        </p>
+        <div className="charts-grid">
+          <SlaComplianceSection
+            title="Incidents"
+            data={incidentSlaCompliance}
+          />
+          <SlaComplianceSection
+            title="Service Requests"
+            data={serviceRequestSlaCompliance}
+          />
         </div>
       </div>
     </>

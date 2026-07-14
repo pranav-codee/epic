@@ -2,10 +2,11 @@
 import io
 from datetime import datetime, timedelta
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from ..tickets.models import Ticket, PRIORITIES
 from ..tickets import workflow as wf
 from ..catalogue.models import AssignmentGroup
+from ..users.models import UserProfile
 from ...core.sla import SLA_HOURS_BY_PRIORITY, AT_RISK_THRESHOLD, BUSINESS_HOURS_SLA_PRIORITY_LEVELS
 from ...core.time import utcnow
 
@@ -207,6 +208,83 @@ def sla_adherence_by_priority(db: Session):
         result[priority] = {"level": level, **by_clock}
 
     return result
+
+
+def breached_tickets_detail(db: Session, ticket_type: str, sla_clock: str):
+    """Production View B drill-down: every ticket of `ticket_type` currently BREACHED on
+    the given SLA clock ("response" -> Ticket.response_sla_status, "resolution" ->
+    Ticket.resolution_sla_status — the same one-time MET/BREACHED verdict columns
+    sla_adherence_by_priority() above reads), with the fields the drill-down table needs:
+    ticket number, created_at, title, priority, assignment group name, technician
+    (assignee) display name, and the free-text breached_reason (tickets/models.py —
+    required app-side once either SLA status is BREACHED).
+
+    Not filtered by open/closed status: a ticket keeps its BREACHED verdict permanently
+    once that clock has fired (sla_adherence_by_priority() counts it the same way), so a
+    since-resolved ticket that still breached its clock stays in this list — the point of
+    the drill-down is "which tickets breached", not "which tickets are still open".
+
+    assignment_group / technician are None when the ticket has no assignment_group_id /
+    assignee_id respectively, rather than being coerced to a placeholder string — this is
+    a raw per-ticket detail list, not a crosstab that needs a stable "Unassigned" row.
+    """
+    if ticket_type not in wf.WORKFLOW_ENABLED_TICKET_TYPES:
+        raise ValueError(f"Invalid ticket_type. Allowed: {sorted(wf.WORKFLOW_ENABLED_TICKET_TYPES)}")
+    if sla_clock not in ("response", "resolution"):
+        raise ValueError("Invalid sla_clock. Allowed: response, resolution")
+
+    status_col = Ticket.response_sla_status if sla_clock == "response" else Ticket.resolution_sla_status
+
+    Assignee = aliased(UserProfile)
+    rows = (
+        db.query(
+            Ticket.ticket_number,
+            Ticket.created_at,
+            Ticket.title,
+            Ticket.priority,
+            AssignmentGroup.name,
+            Assignee.display_name,
+            Ticket.breached_reason,
+        )
+        .outerjoin(AssignmentGroup, Ticket.assignment_group_id == AssignmentGroup.id)
+        .outerjoin(Assignee, Ticket.assignee_id == Assignee.id)
+        .filter(Ticket.ticket_type == ticket_type, status_col == "BREACHED")
+        .order_by(Ticket.created_at.asc())
+        .all()
+    )
+
+    return [
+        {
+            "ticket_number": ticket_number,
+            "created_at": created_at.isoformat() if created_at else None,
+            "title": title,
+            "priority": priority,
+            "assignment_group": group_name,
+            "technician": assignee_name,
+            "breached_reason": breached_reason,
+        }
+        for ticket_number, created_at, title, priority, group_name, assignee_name, breached_reason in rows
+    ]
+
+
+def sla_compliance_view(db: Session, ticket_type: str):
+    """Production View B: combines sla_adherence_by_priority()'s achieved%/target% matrix
+    with the breached-tickets drill-down for both clocks, scoped to a single ticket_type
+    (the view is "for each ticket type" per spec — sla_adherence_by_priority() itself isn't
+    ticket_type-scoped since it's used elsewhere as a global rollup, so the per-type
+    breached-ticket filtering happens here instead).
+    """
+    if ticket_type not in wf.WORKFLOW_ENABLED_TICKET_TYPES:
+        raise ValueError(f"Invalid ticket_type. Allowed: {sorted(wf.WORKFLOW_ENABLED_TICKET_TYPES)}")
+
+    return {
+        "ticket_type": ticket_type,
+        "adherence_by_priority": sla_adherence_by_priority(db),
+        "breached_tickets": {
+            "response": breached_tickets_detail(db, ticket_type, "response"),
+            "resolution": breached_tickets_detail(db, ticket_type, "resolution"),
+        },
+    }
 
 
 def inflow_resolved_open_by_group(db: Session, now: datetime | None = None):

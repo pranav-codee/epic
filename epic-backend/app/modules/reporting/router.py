@@ -43,6 +43,19 @@ def group_status_crosstab(request: Request, ticket_type: str = "INCIDENT", db: S
         raise HTTPException(400, str(e))
 
 
+@router.get("/sla-compliance")
+@limiter.limit("30/minute")
+def sla_compliance(request: Request, ticket_type: str = "INCIDENT", db: Session = Depends(get_db),
+                    _=Depends(require_role(*_DASHBOARD_ROLES))):
+    """Production View B: Priority x (Response/Resolution) achieved%/target% matrix plus
+    the breached-tickets drill-down (with breached_reason) for the given ticket_type. Same
+    role gate as /overview."""
+    try:
+        return service.sla_compliance_view(db, ticket_type.upper().strip())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/ageing")
 @limiter.limit("30/minute")
 def ageing(request: Request, ticket_type: str = "INCIDENT", channel: str = "all",
