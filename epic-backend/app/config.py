@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     # the raw connection IP. Leave as 127.0.0.1 for local dev (the loopback the dev server
     # itself runs on); set to the real reverse-proxy host's IP(s) in prod, comma-separated if
     # there's more than one (e.g. an HA pair).
-    TRUSTED_PROXY_IPS: str = "127.0.0.1"
+    TRUSTED_PROXY_IPS: str = ""
 
     # --- Monitoring-tool ingestion endpoint (SPEC §6) ---
     # Static service-token bearer credential for POST /tickets/ingest/monitoring. That

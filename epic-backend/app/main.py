@@ -53,6 +53,24 @@ def create_app() -> FastAPI:
                 "FRONTEND_BASE_URL is still a localhost dev default; set it to the real "
                 "frontend origin before running with APP_ENV=prod."
             )
+        if not settings.TRUSTED_PROXY_IPS.strip():
+            # core/rate_limit.py's get_real_client_ip() only trusts X-Forwarded-For from
+            # peers listed here — everyone else gets rate-limited by their direct TCP
+            # peer IP, which is the correct fail-safe behavior. But an EMPTY list makes
+            # every rate limit in the app (login throttling, ticket-creation flood
+            # protection, the attachment-cap throttle, the export-endpoint throttle)
+            # trivially bypassable: since nothing is trusted, the code takes the
+            # "misconfigured proxy" fallback path and reads the direct peer IP anyway —
+            # which behind a reverse proxy is always the *proxy's* IP, shared by every
+            # employee, so a naive fix of "just require it non-empty" isn't enough on
+            # its own without also getting the value right. Fail closed here rather than
+            # let prod boot with rate limiting silently defeated or silently shared
+            # across the whole employee base.
+            raise RuntimeError(
+                "TRUSTED_PROXY_IPS must be set to the real reverse proxy's IP(s) before "
+                "running with APP_ENV=prod — see core/rate_limit.py's get_real_client_ip() "
+                "docstring for why this can't default to anything meaningful."
+            )
 
     app = FastAPI(title="EPIC v1 — Enterprise Platform for Intelligent IT Collaboration", version="1.0.0")
 
