@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..tickets.models import Ticket, PRIORITIES
+from ..tickets import workflow as wf
 from ..catalogue.models import AssignmentGroup
 from ...core.sla import SLA_HOURS_BY_PRIORITY, AT_RISK_THRESHOLD, BUSINESS_HOURS_SLA_PRIORITY_LEVELS
 from ...core.time import utcnow
@@ -261,6 +262,51 @@ def inflow_resolved_open_by_group(db: Session, now: datetime | None = None):
             for name in names
         ],
     }
+
+
+def group_by_status_crosstab(db: Session, ticket_type: str):
+    """Production View D: currently-open tickets cross-tabbed by Assignment Group x
+    workflow_status, computed separately per ticket_type (INCIDENT vs SERVICE_REQUEST)
+    since the two have distinct workflow_status vocabularies (tickets/workflow.py's
+    INCIDENT_WORKFLOW_STATUSES vs SERVICE_REQUEST_WORKFLOW_STATUSES).
+
+    "Open" means Ticket.status in OPEN_STATES (same definition used everywhere else in this
+    module) — this also happens to exclude the terminal workflow_status values (RESOLVED/
+    FULFILLED) without needing a separate filter, since a ticket reaching either of those
+    always has its generic `status` moved to RESOLVED too (tickets/service.py).
+
+    Every workflow_status column for the ticket type is always present in each row's
+    `counts_by_workflow_status` (zero-filled), even if no group currently has a ticket in
+    that state, so the frontend can render a stable set of columns rather than a ragged
+    one that changes shape depending on what data happens to exist right now.
+    """
+    if ticket_type not in wf.WORKFLOW_ENABLED_TICKET_TYPES:
+        raise ValueError(f"Invalid ticket_type. Allowed: {sorted(wf.WORKFLOW_ENABLED_TICKET_TYPES)}")
+
+    statuses = wf.workflow_statuses_for(ticket_type)
+    group_name = func.coalesce(AssignmentGroup.name, "Unassigned")
+
+    rows = (
+        db.query(group_name, Ticket.workflow_status, func.count(Ticket.id))
+        .outerjoin(AssignmentGroup, Ticket.assignment_group_id == AssignmentGroup.id)
+        .filter(Ticket.ticket_type == ticket_type, Ticket.status.in_(OPEN_STATES))
+        .group_by(group_name, Ticket.workflow_status)
+        .all()
+    )
+
+    by_group: dict[str, dict[str, int]] = {}
+    for name, workflow_status, count in rows:
+        bucket = by_group.setdefault(name, {s: 0 for s in statuses})
+        if workflow_status in bucket:
+            bucket[workflow_status] = count
+        # A row with a workflow_status outside this ticket type's set (e.g. NULL, or stale
+        # data predating the workflow_status column) doesn't fit any column — it still
+        # created the group's entry above via setdefault, just with no count attributed.
+
+    return [
+        {"assignment_group_name": name, "counts_by_workflow_status": by_group[name]}
+        for name in sorted(by_group)
+    ]
 
 
 def engineer_workload(db: Session, engineer_id: str):

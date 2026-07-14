@@ -41,6 +41,26 @@ const FALLBACK_PALETTE = [
   "#7c3aed",
 ];
 
+// Mirrors tickets/workflow.py's INCIDENT_WORKFLOW_STATUSES / SERVICE_REQUEST_WORKFLOW_STATUSES
+// — fixed column order for the "Open Tickets by Group × Status" crosstab tables below, so the
+// column set stays stable even if a given group currently has zero tickets in some state.
+const INCIDENT_WORKFLOW_STATUSES = [
+  "PROGRESSING",
+  "ON_HOLD",
+  "PEND_3RDPARTY",
+  "PEND_USER",
+  "APPROVED",
+  "RESOLVED",
+];
+const SERVICE_REQUEST_WORKFLOW_STATUSES = [
+  "PROGRESSING",
+  "ON_HOLD",
+  "PEND_3RDPARTY",
+  "PEND_USER",
+  "IN_APPROVAL",
+  "FULFILLED",
+];
+
 function colorFor(map, key, index) {
   return map[key] || FALLBACK_PALETTE[index % FALLBACK_PALETTE.length];
 }
@@ -129,6 +149,38 @@ function Kpi({ value, label, tone }) {
   );
 }
 
+function CrosstabTable({ title, columns, rows }) {
+  return (
+    <div className="chart-card">
+      <h4 style={{ marginTop: 0 }}>{title}</h4>
+      {!rows || rows.length === 0 ? (
+        <p className="muted">No open tickets</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Assignment Group</th>
+              {columns.map((c) => (
+                <th key={c}>{c.replace(/_/g, " ")}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.assignment_group_name}>
+                <td>{r.assignment_group_name}</td>
+                {columns.map((c) => (
+                  <td key={c}>{r.counts_by_workflow_status?.[c] ?? 0}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function slaTone(rate) {
   if (rate == null) return "";
   if (rate >= 90) return "ok";
@@ -141,6 +193,8 @@ export default function Dashboard() {
   const [me, setMe] = useState(null);
   const [exporting, setExporting] = useState(null);
   const [error, setError] = useState(null);
+  const [incidentCrosstab, setIncidentCrosstab] = useState(null);
+  const [serviceRequestCrosstab, setServiceRequestCrosstab] = useState(null);
 
   const load = useCallback(() => {
     api.get("/dashboard/overview").then(setData);
@@ -148,6 +202,14 @@ export default function Dashboard() {
       .get("/dashboard/engineer/me")
       .then(setMe)
       .catch(() => {});
+    api
+      .get("/dashboard/group-status-crosstab?ticket_type=INCIDENT")
+      .then(setIncidentCrosstab)
+      .catch(() => setIncidentCrosstab([]));
+    api
+      .get("/dashboard/group-status-crosstab?ticket_type=SERVICE_REQUEST")
+      .then(setServiceRequestCrosstab)
+      .catch(() => setServiceRequestCrosstab([]));
   }, []);
 
   useEffect(() => {
@@ -359,6 +421,23 @@ export default function Dashboard() {
           data={toChartData(data.by_category)}
           total={data.total_tickets}
         />
+      </div>
+
+      {/* --- Group x Status crosstab (production View D) --- */}
+      <div className="card" style={{ marginTop: 24 }}>
+        <h3>Open Tickets by Group × Status</h3>
+        <div className="charts-grid">
+          <CrosstabTable
+            title="Incidents"
+            columns={INCIDENT_WORKFLOW_STATUSES}
+            rows={incidentCrosstab}
+          />
+          <CrosstabTable
+            title="Service Requests"
+            columns={SERVICE_REQUEST_WORKFLOW_STATUSES}
+            rows={serviceRequestCrosstab}
+          />
+        </div>
       </div>
     </>
   );

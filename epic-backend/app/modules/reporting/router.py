@@ -31,6 +31,18 @@ def sla_adherence(request: Request, db: Session = Depends(get_db),
     return service.sla_adherence_by_priority(db)
 
 
+@router.get("/group-status-crosstab")
+@limiter.limit("30/minute")
+def group_status_crosstab(request: Request, ticket_type: str = "INCIDENT", db: Session = Depends(get_db),
+                          _=Depends(require_role(*_DASHBOARD_ROLES))):
+    """Production View D: open tickets cross-tabbed by Assignment Group x workflow_status,
+    computed separately for INCIDENT vs SERVICE_REQUEST. Same role gate as /overview."""
+    try:
+        return service.group_by_status_crosstab(db, ticket_type.upper().strip())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/engineer/me")
 @limiter.limit("30/minute")
 def my_workload(request: Request, db: Session = Depends(get_db),
