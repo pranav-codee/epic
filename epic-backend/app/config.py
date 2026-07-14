@@ -78,6 +78,15 @@ class Settings(BaseSettings):
     # there's more than one (e.g. an HA pair).
     TRUSTED_PROXY_IPS: str = "127.0.0.1"
 
+    # --- Monitoring-tool ingestion endpoint (SPEC §6) ---
+    # Static service-token bearer credential for POST /tickets/ingest/monitoring. That
+    # endpoint is machine-to-machine traffic (a monitoring tool, not a human), so it can't
+    # authenticate via the session-cookie flow every other endpoint uses — see
+    # dependencies.require_monitoring_ingest_token. Left empty by default so the endpoint
+    # fails closed (401 on every request, per SPEC §9) until an operator explicitly
+    # provisions a token via env.
+    MONITORING_INGEST_TOKEN: str = ""
+
     @property
     def allowed_extensions(self) -> set[str]:
         return {e.strip().lower() for e in self.ATTACHMENT_ALLOWED_EXTENSIONS.split(",") if e.strip()}

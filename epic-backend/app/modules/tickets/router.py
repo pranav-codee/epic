@@ -8,12 +8,12 @@ from . import service
 from .schemas import (
     TicketCreateIn, TicketAssignIn, StatusChangeIn, PriorityChangeIn, TicketTypeChangeIn,
     CommentCreateIn, TicketOut, TicketDetailOut, TicketCommentOut, TicketAttachmentOut,
-    WorkflowStatusChangeIn,
+    WorkflowStatusChangeIn, MonitoringTicketIngestIn,
 )
 from .state_machine import allowed_target_states_for
 from . import workflow as wf
 from ...database import get_db
-from ...dependencies import get_current_user
+from ...dependencies import get_current_user, require_monitoring_ingest_token
 from ...config import get_settings
 
 router = APIRouter()
@@ -48,6 +48,41 @@ def create_ticket(request: Request, payload: TicketCreateIn, db: Session = Depen
                               item_id=payload.item_id,
                               device_name=payload.device_name, device_ip_address=payload.device_ip_address,
                               device_site_name=payload.device_site_name)
+    return t
+
+
+@router.post("/ingest/monitoring", response_model=TicketOut, status_code=201)
+@limiter.limit("120/minute")
+def ingest_monitoring_ticket(request: Request, payload: MonitoringTicketIngestIn,
+                             db: Session = Depends(get_db),
+                             _token_ok=Depends(require_monitoring_ingest_token)):
+    """SPEC §6: dedicated monitoring-tool ingestion endpoint. Service-token auth (not a
+    human session, see require_monitoring_ingest_token) — every other tickets/* route uses
+    get_current_user instead. Maps the alert payload onto the same §1 fields a human-created
+    MONITORING_TOOL ticket would have, then reuses service.create_ticket for the actual
+    creation so this gets the exact same audit-logging and SLA-computation behaviour as
+    every other ticket-creation path, without duplicating that logic here."""
+    try:
+        payload = payload.normalized()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    creator = service.get_or_create_monitoring_service_account(db)
+    t = service.create_ticket(
+        db, creator=creator, title=payload.title, description=payload.description,
+        ticket_type="INCIDENT",
+        # No flat-category equivalent exists for a monitoring alert (there's no tower/
+        # service pick here, just an alert) — "OTHER" is the same generic bucket the new
+        # catalogue-driven ticket form falls back to for the same reason.
+        category="OTHER",
+        priority=payload.priority,
+        channel="MONITORING_TOOL",
+        # requestor_id intentionally omitted — a monitoring alert has no human requestor;
+        # create_ticket defaults it to the creator (the monitoring service account) same
+        # as any other ticket created without an explicit requestor.
+        device_name=payload.device_name, device_ip_address=payload.device_ip_address,
+        device_site_name=payload.device_site_name,
+    )
     return t
 
 

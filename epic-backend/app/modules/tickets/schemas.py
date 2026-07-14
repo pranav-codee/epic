@@ -42,6 +42,25 @@ class TicketCreateIn(BaseModel):
         return self
 
 
+class MonitoringTicketIngestIn(BaseModel):
+    """SPEC §6: payload for POST /tickets/ingest/monitoring. Deliberately narrower than
+    TicketCreateIn — a monitoring tool always creates an INCIDENT over the MONITORING_TOOL
+    channel with no human requestor, so those aren't caller-supplied fields here; only the
+    §1 fields a monitoring alert can actually supply are exposed."""
+    title: str = Field(min_length=3, max_length=256)
+    description: str = Field(min_length=5)
+    priority: str
+    device_name: Optional[str] = None
+    device_ip_address: Optional[str] = None
+    device_site_name: Optional[str] = None
+
+    def normalized(self):
+        self.priority = self.priority.upper().strip()
+        if self.priority not in PRIORITIES:
+            raise ValueError(f"Invalid priority. Allowed: {PRIORITIES}")
+        return self
+
+
 class TicketAssignIn(BaseModel):
     assignee_id: str
 

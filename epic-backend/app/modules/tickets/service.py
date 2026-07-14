@@ -218,6 +218,33 @@ def _record_resolution(db: Session, *, ticket: Ticket, actor, breached_reason: s
 
 # ---------- Core mutations ----------
 
+# SPEC §6: well-known identity used as Ticket.creator_id for tickets created by the
+# monitoring-ingestion endpoint (POST /tickets/ingest/monitoring). That endpoint
+# authenticates via a static service token, not a human session, so there is no
+# UserProfile from get_current_user to use — but creator_id is a NOT NULL FK, so
+# something has to fill it. A single lazily-provisioned system account keeps every
+# monitoring-sourced ticket attributable (in the audit trail and the ticket's own
+# creator field) without inventing a parallel "creatorless ticket" code path.
+_MONITORING_SERVICE_ACCOUNT_EMAIL = "monitoring-ingest@system.internal"
+_MONITORING_SERVICE_ACCOUNT_ENTRA_OID = "system-monitoring-ingest"
+
+
+def get_or_create_monitoring_service_account(db: Session) -> UserProfile:
+    user = db.query(UserProfile).filter(UserProfile.email == _MONITORING_SERVICE_ACCOUNT_EMAIL).one_or_none()
+    if user:
+        return user
+    user = UserProfile(
+        entra_object_id=_MONITORING_SERVICE_ACCOUNT_ENTRA_OID,
+        email=_MONITORING_SERVICE_ACCOUNT_EMAIL,
+        display_name="Monitoring Tool (System)",
+        is_active=True,
+        user_type="INTERNAL",
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
 def create_ticket(db: Session, *, creator, title: str, description: str, ticket_type: str, category: str,
                   priority: str, requestor_id: str | None = None, location_id: str | None = None,
                   channel: str = "SELF_SERVICE", assignment_group_id: str | None = None,

@@ -1,8 +1,10 @@
 """
 Shared FastAPI dependencies: get_db (re-exported), get_current_user from session cookie.
 """
-from fastapi import Cookie, Depends, HTTPException, status
+import hmac
+from fastapi import Cookie, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
+from .config import get_settings
 from .database import get_db
 from .core.security import read_session, SESSION_COOKIE_NAME
 
@@ -39,3 +41,37 @@ def get_current_user(
     # Attach role strings as a transient attribute.
     user.roles = [r.role for r in db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == user.id).all()]
     return user
+
+
+def require_monitoring_ingest_token(
+    authorization: str | None = Header(default=None),
+):
+    """
+    SPEC §6 / §9: auth for the dedicated monitoring-tool ticket-ingestion endpoint. This is
+    machine-to-machine traffic (a monitoring tool, not a signed-in human), so — deliberately,
+    unlike every other tickets/* route — this does NOT use get_current_user's session-cookie
+    flow. Instead it checks a static service-token bearer credential (MONITORING_INGEST_TOKEN)
+    configured out-of-band via env.
+
+    Fails closed on every branch (SPEC §9): an unconfigured token, a missing/malformed
+    Authorization header, or a mismatched token are all a 401 — never a silent pass-through.
+    """
+    settings = get_settings()
+    expected = settings.MONITORING_INGEST_TOKEN
+    if not expected:
+        # No token has been provisioned for this deployment — treat the endpoint as
+        # unusable rather than accepting a blank/empty credential.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Monitoring ingestion is not configured")
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Missing or invalid bearer token")
+
+    token = authorization[len("Bearer "):].strip()
+    # Constant-time comparison so response timing can't be used to brute-force the token
+    # one byte at a time.
+    if not token or not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid service token")
+
+    return True
