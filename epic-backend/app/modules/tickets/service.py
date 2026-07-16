@@ -5,7 +5,7 @@ Design rule (NFR-5.4-7 extensibility): every mutation goes through this module, 
 in router code. A future AI Orchestrator can call these functions directly to obtain the same
 audit + notification behaviour without duplicating logic.
 """
-from sqlalchemy import update, func
+from sqlalchemy import update, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
@@ -77,11 +77,21 @@ def get_ticket_or_404(db: Session, ticket_id: str) -> Ticket:
 
 
 def _ensure_visibility(ticket: Ticket, user) -> None:
-    """Employees see only their own tickets (BR-3). Engineers/managers/admins see all (BR-4)."""
+    """Employees see their own tickets (BR-3) — meaning tickets they created OR tickets
+    filed on their behalf by someone else (Ticket.requestor_id), not just ones they
+    personally submitted. Engineers/managers/admins see all (BR-4).
+
+    FIX: previously only checked ticket.creator_id, so an employee a ticket was raised
+    *for* (e.g. logged by an agent on a phone call) could never see their own ticket
+    unless they also happened to be the creator — the requestor_id column was written at
+    creation and then never consulted again anywhere. requestor_id defaults to creator_id
+    when nobody else is named (tickets/service.py's create_ticket), so this is a strict
+    widening: every ticket a plain creator_id check used to allow is still allowed.
+    """
     roles = set(user.roles or [])
     if roles & {Role.IT_ENGINEER.value, Role.IT_MANAGER.value, Role.SYSTEM_ADMIN.value}:
         return
-    if ticket.creator_id != user.id:
+    if ticket.creator_id != user.id and ticket.requestor_id != user.id:
         raise Forbidden("You can only view your own tickets")
 
 
@@ -703,7 +713,10 @@ def list_for_user(db: Session, user, *, limit: int = 200, offset: int = 0):
     offset = max(0, offset)
     q = db.query(Ticket).options(joinedload(Ticket.creator), joinedload(Ticket.assignee))
     if not _is_engineer(user):
-        q = q.filter(Ticket.creator_id == user.id)
+        # FIX: was `Ticket.creator_id == user.id` only, so "My Tickets" silently omitted
+        # tickets someone else created *for* this employee. See _ensure_visibility()'s
+        # docstring above for the same fix applied to the single-ticket detail view.
+        q = q.filter(or_(Ticket.creator_id == user.id, Ticket.requestor_id == user.id))
     total = q.with_entities(func.count(Ticket.id)).scalar() or 0
     results = q.order_by(Ticket.created_at.desc()).offset(offset).limit(limit).all()
     return total, results, limit, offset

@@ -1,6 +1,7 @@
 """
 Role-scoped ticket search. Per BR-3/BR-4:
-- EMPLOYEE only sees rows where creator_id == self.id
+- EMPLOYEE only sees rows where they're the creator OR the requestor (see the FIX note
+  on the base filter below)
 - IT_ENGINEER / IT_MANAGER / SYSTEM_ADMIN see all
 """
 from sqlalchemy import or_, func
@@ -10,10 +11,6 @@ from ..users.models import UserProfile
 from ...core.rbac import Role
 
 
-# Fix: previously `limit` had no upper bound and no `offset`, and the router
-# never exposed either — callers were silently capped at the first 100 rows
-# with no way to page further. total_count is still returned so the frontend
-# can compute total pages.
 MAX_PAGE_SIZE = 200
 
 
@@ -34,7 +31,10 @@ def search(db, *, me,
 
     query = db.query(Ticket).options(joinedload(Ticket.creator), joinedload(Ticket.assignee))
     if not is_engineer:
-        query = query.filter(Ticket.creator_id == me.id)
+        # FIX: was `Ticket.creator_id == me.id` only, so an employee's own search never
+        # found a ticket someone else filed on their behalf (Ticket.requestor_id) — same
+        # underlying gap as tickets/service.py's _ensure_visibility()/list_for_user().
+        query = query.filter(or_(Ticket.creator_id == me.id, Ticket.requestor_id == me.id))
 
     if ticket_number:
         query = query.filter(Ticket.ticket_number.ilike(f"%{ticket_number}%") if hasattr(Ticket.ticket_number, "ilike") else Ticket.ticket_number.like(f"%{ticket_number}%"))
@@ -47,7 +47,11 @@ def search(db, *, me,
     if priority:
         query = query.filter(Ticket.priority == priority.upper())
     if employee_id and is_engineer:
-        query = query.filter(Ticket.creator_id == employee_id)
+        # FIX: was `Ticket.creator_id == employee_id` only. An IT engineer/manager/admin
+        # looking up "this employee's tickets" — e.g. while on a call with them — needs
+        # tickets raised *for* that employee to show up too, not just ones they personally
+        # submitted through the portal themselves.
+        query = query.filter(or_(Ticket.creator_id == employee_id, Ticket.requestor_id == employee_id))
     if assignment_group_id:
         # Supports a single id ("grp-1") or a comma-separated list ("grp-1,grp-2") so the
         # frontend's "My Group's Tickets" quick-filter can pass every group the caller
@@ -63,6 +67,4 @@ def search(db, *, me,
 
     total = query.with_entities(func.count(Ticket.id)).scalar() or 0
     results = query.order_by(Ticket.created_at.desc()).offset(offset).limit(limit).all()
-    # Return the clamped values too, not just what was requested, so the caller
-    # (and the API response) reflects what was actually applied.
     return total, results, limit, offset
